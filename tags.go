@@ -73,7 +73,11 @@ func (p *Profile) Copyright() (MultiLocalizedUnicode, error) {
 		return nil, err
 	}
 	val = MultiLocalizedUnicode{
-		{Value: s},
+		{
+			Language: "en",
+			Country:  "US",
+			Value:    s,
+		},
 	}
 	return val, nil
 }

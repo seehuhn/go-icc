@@ -41,8 +41,8 @@ func decodeText(data []byte) (string, error) {
 type MultiLocalizedUnicode []LocalizedUnicode
 
 type LocalizedUnicode struct {
-	Language uint16
-	Country  uint16
+	Language string
+	Country  string
 	Value    string
 }
 
@@ -62,8 +62,8 @@ func decodeMLUC(data []byte) (MultiLocalizedUnicode, error) {
 	}
 	res := make(MultiLocalizedUnicode, n)
 	for i := range res {
-		language := getUint16(data, 16+12*i)
-		country := getUint16(data, 16+12*i+2)
+		language := string(data[16+12*i : 16+12*i+2])
+		country := string(data[16+12*i+2 : 16+12*i+4])
 		length := getUint32(data, 16+12*i+4)
 		offset := getUint32(data, 16+12*i+8)
 

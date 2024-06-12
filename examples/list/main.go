@@ -93,19 +93,20 @@ func show(fname string) error {
 	slices.Sort(tags)
 	for _, t := range tags {
 		data := p.TagData[t]
-		sig := uint32(data[0])<<24 | uint32(data[1])<<16 | uint32(data[2])<<8 | uint32(data[3])
-		fmt.Printf("  %s: %s (%d bytes)\n", t, tag(sig), len(data))
-	}
-
-	fmt.Println()
-
-	cprt, err := p.Copyright()
-	if err != nil {
-		return err
-	}
-	fmt.Println("Copyright:")
-	for _, lu := range cprt {
-		fmt.Printf("  %04X %04X: %s\n", lu.Language, lu.Country, lu.Value)
+		switch t {
+		case icc.Copyright:
+			fmt.Printf("  %s: (%d bytes)\n", t, len(data))
+			cprt, err := p.Copyright()
+			if err != nil {
+				return err
+			}
+			for _, lu := range cprt {
+				fmt.Printf("    [%s_%s] %s\n", lu.Language, lu.Country, lu.Value)
+			}
+		default:
+			sig := uint32(data[0])<<24 | uint32(data[1])<<16 | uint32(data[2])<<8 | uint32(data[3])
+			fmt.Printf("  %s: %s (%d bytes)\n", t, tag(sig), len(data))
+		}
 	}
 
 	fmt.Println()
