@@ -66,8 +66,8 @@ func (p *Profile) Encode() []byte {
 	putUint32(buf, 4, p.PreferedCMMType)
 	putUint32(buf, 8, uint32(version))
 	putUint32(buf, 12, uint32(p.Class))
-	putUint32(buf, 16, p.ColorSpace)
-	putUint32(buf, 20, p.PCS)
+	putUint32(buf, 16, uint32(p.ColorSpace))
+	putUint32(buf, 20, uint32(p.PCS))
 	putDateTime(buf, 24, p.CreationDate)
 	putUint32(buf, 36, 0x61637370) // "acsp"
 	putUint32(buf, 40, p.PrimaryPlatform)

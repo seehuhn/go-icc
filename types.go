@@ -38,8 +38,10 @@ func decodeText(data []byte) (string, error) {
 	return string(data[start:end]), nil
 }
 
+// MultiLocalizedUnicode represents a localized Unicode string.
 type MultiLocalizedUnicode []LocalizedUnicode
 
+// LocalizedUnicode represents a language-country pair.
 type LocalizedUnicode struct {
 	Language string
 	Country  string

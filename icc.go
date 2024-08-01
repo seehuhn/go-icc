@@ -26,8 +26,8 @@ type Profile struct {
 	PreferedCMMType    uint32
 	Version            Version
 	Class              ProfileClass
-	ColorSpace         uint32
-	PCS                uint32
+	ColorSpace         ColorSpace
+	PCS                ColorSpace
 	CreationDate       time.Time
 	PrimaryPlatform    uint32
 	Flags              uint32
@@ -98,14 +98,14 @@ func (c ProfileClass) String() string {
 
 // Profile classes defined in the ICC specification.
 const (
-	InputDeviceProfile   ProfileClass = 0x73636E72
-	DisplayDeviceProfile ProfileClass = 0x6D6E7472
-	OutputDeviceProfile  ProfileClass = 0x70727472
+	InputDeviceProfile   ProfileClass = 0x73636E72 // "scnr"
+	DisplayDeviceProfile ProfileClass = 0x6D6E7472 // "mntr"
+	OutputDeviceProfile  ProfileClass = 0x70727472 // "prtr"
 
-	ColorSpaceProfile ProfileClass = 0x73706163
-	DeviceLinkProfile ProfileClass = 0x6C696E6B
-	AbstractProfile   ProfileClass = 0x61627374
-	NamedColorProfile ProfileClass = 0x6E6D636C
+	ColorSpaceProfile ProfileClass = 0x73706163 // "spac"
+	DeviceLinkProfile ProfileClass = 0x6C696E6B // "link"
+	AbstractProfile   ProfileClass = 0x61627374 // "abst"
+	NamedColorProfile ProfileClass = 0x6E6D636C // "nmcl"
 )
 
 // RenderingIntent is the ICC rendering intent.
@@ -133,6 +133,168 @@ const (
 	Saturation           RenderingIntent = 2
 	AbsoluteColorimetric RenderingIntent = 3
 )
+
+// ColorSpace represents an color space in an ICC profile.
+type ColorSpace uint32
+
+func (s ColorSpace) String() string {
+	switch s {
+	case CIEXYZSpace:
+		return "CIEXYZ"
+	case CIELabSpace:
+		return "CIELAB"
+	case CIELuvSpace:
+		return "CIELUV"
+	case YCbCrSpace:
+		return "YCbCr"
+	case CIEYxySpace:
+		return "CIEYxy"
+	case RGBSpace:
+		return "RGB"
+	case GraySpace:
+		return "Gray"
+	case HSVSpace:
+		return "HSV"
+	case HLSSpace:
+		return "HLS"
+	case CMYKSpace:
+		return "CMYK"
+	case CMYSpace:
+		return "CMY"
+	case Color2Space:
+		return "2CLR"
+	case Color3Space:
+		return "3CLR"
+	case Color4Space:
+		return "4CLR"
+	case Color5Space:
+		return "5CLR"
+	case Color6Space:
+		return "6CLR"
+	case Color7Space:
+		return "7CLR"
+	case Color8Space:
+		return "8CLR"
+	case Color9Space:
+		return "9CLR"
+	case Color10Space:
+		return "10CLR"
+	case Color11Space:
+		return "11CLR"
+	case Color12Space:
+		return "12CLR"
+	case Color13Space:
+		return "13CLR"
+	case Color14Space:
+		return "14CLR"
+	case Color15Space:
+		return "15CLR"
+	default:
+		return fmt.Sprintf("ColorSpace(0x%08X)", uint32(s))
+	}
+}
+
+// NumComponents returns the number of color components in the color space.
+func (s ColorSpace) NumComponents() int {
+	switch s {
+	case CIEXYZSpace:
+		return 3
+	case CIELabSpace:
+		return 3
+	case CIELuvSpace:
+		return 3
+	case YCbCrSpace:
+		return 3
+	case CIEYxySpace:
+		return 3
+	case RGBSpace:
+		return 3
+	case GraySpace:
+		return 1
+	case HSVSpace:
+		return 3
+	case HLSSpace:
+		return 3
+	case CMYKSpace:
+		return 4
+	case CMYSpace:
+		return 3
+	case Color2Space:
+		return 2
+	case Color3Space:
+		return 3
+	case Color4Space:
+		return 4
+	case Color5Space:
+		return 5
+	case Color6Space:
+		return 6
+	case Color7Space:
+		return 7
+	case Color8Space:
+		return 8
+	case Color9Space:
+		return 9
+	case Color10Space:
+		return 10
+	case Color11Space:
+		return 11
+	case Color12Space:
+		return 12
+	case Color13Space:
+		return 13
+	case Color14Space:
+		return 14
+	case Color15Space:
+		return 15
+	default:
+		return 0 // unknown
+	}
+}
+
+// Color spaces defined in the ICC specification.
+const (
+	CIEXYZSpace  ColorSpace = 0x58595A20 // "XYZ "
+	CIELabSpace  ColorSpace = 0x4C616220 // "Lab "
+	CIELuvSpace  ColorSpace = 0x4C757620 // "Luv "
+	YCbCrSpace   ColorSpace = 0x59436272 // "YCbr"
+	CIEYxySpace  ColorSpace = 0x59787920 // "Yxy "
+	RGBSpace     ColorSpace = 0x52474220 // "RGB "
+	GraySpace    ColorSpace = 0x47524159 // "GRAY"
+	HSVSpace     ColorSpace = 0x48535620 // "HSV "
+	HLSSpace     ColorSpace = 0x484C5320 // "HLS "
+	CMYKSpace    ColorSpace = 0x434D594B // "CMYK"
+	CMYSpace     ColorSpace = 0x434D5920 // "CMY "
+	Color2Space  ColorSpace = 0x32434C52 // "2CLR"
+	Color3Space  ColorSpace = 0x33434C52 // "3CLR"
+	Color4Space  ColorSpace = 0x34434C52 // "4CLR"
+	Color5Space  ColorSpace = 0x35434C52 // "5CLR"
+	Color6Space  ColorSpace = 0x36434C52 // "6CLR"
+	Color7Space  ColorSpace = 0x37434C52 // "7CLR"
+	Color8Space  ColorSpace = 0x38434C52 // "8CLR"
+	Color9Space  ColorSpace = 0x39434C52 // "9CLR"
+	Color10Space ColorSpace = 0x41434C52 // "ACLR"
+	Color11Space ColorSpace = 0x42434C52 // "BCLR"
+	Color12Space ColorSpace = 0x43434C52 // "CCLR"
+	Color13Space ColorSpace = 0x44434C52 // "DCLR"
+	Color14Space ColorSpace = 0x45434C52 // "ECLR"
+	Color15Space ColorSpace = 0x46434C52 // "FCLR"
+
+	PCSXYZSpace = CIEXYZSpace
+	PCSLabSpace = CIELabSpace
+)
+
+// PCSName returns the name of the PCS color space.
+func (p *Profile) PCSName() string {
+	switch p.PCS {
+	case PCSXYZSpace:
+		return "PCSXYZ"
+	case PCSLabSpace:
+		return "PCSLab"
+	default:
+		return p.PCS.String()
+	}
+}
 
 // CheckSum contains information about the Profile ID field.
 type CheckSum int

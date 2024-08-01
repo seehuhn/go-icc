@@ -60,8 +60,8 @@ func show(fname string) error {
 	}
 	fmt.Printf("  Version: %s\n", p.Version)
 	fmt.Printf("  Class: %s\n", p.Class)
-	fmt.Printf("  ColorSpace: %s\n", tag(p.ColorSpace))
-	fmt.Printf("  PCS: %s\n", tag(p.PCS))
+	fmt.Printf("  ColorSpace: %s\n", p.ColorSpace)
+	fmt.Printf("  PCS: %s\n", p.PCSName())
 	fmt.Printf("  CreationDate: %s\n", p.CreationDate)
 	if p.PrimaryPlatform != 0 {
 		fmt.Printf("  PrimaryPlatform: %s\n", tag(p.PrimaryPlatform))

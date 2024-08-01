@@ -50,14 +50,14 @@ func (t TagType) String() string {
 	}
 }
 
-// These are the tag types defined in the ICC specification.
-// (The list is currently incomplete.)
+// Some tag types defined in the ICC specification.
 const (
 	ProfileDescription TagType = 0x64657363 // "desc"
 	Copyright          TagType = 0x63707274 // "cprt"
 	ChromaticAdaption  TagType = 0x63686164 // "chad"
 )
 
+// Copyright returns the contents of the copyright tag.
 func (p *Profile) Copyright() (MultiLocalizedUnicode, error) {
 	tag, ok := p.TagData[Copyright]
 	if !ok {
