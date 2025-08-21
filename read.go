@@ -120,10 +120,6 @@ func isZero(b []byte) bool {
 	return true
 }
 
-func getUint16(data []byte, offset int) uint16 {
-	return uint16(data[offset])<<8 | uint16(data[offset+1])
-}
-
 func getUint32(data []byte, offset int) uint32 {
 	return uint32(data[offset])<<24 | uint32(data[offset+1])<<16 | uint32(data[offset+2])<<8 | uint32(data[offset+3])
 }
