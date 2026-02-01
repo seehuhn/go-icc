@@ -19,15 +19,21 @@ package icc
 import (
 	"bytes"
 	"crypto/md5"
+	"errors"
 	"sort"
 	"time"
 )
 
-// Encode converts the profile to binary form.
-func (p *Profile) Encode() []byte {
-	version := p.Version
-	if version == 0 {
-		version = currentVersion
+// ErrInvalidVersion is returned by [Profile.Encode] when Version is zero.
+var ErrInvalidVersion = errors.New("ICC profile version not set")
+
+// Encode converts the profile to binary ICC format.
+//
+// The Version field must be set to a valid ICC version (e.g. [Version4_4_0]).
+// For version 4.0 and later, a profile ID checksum is computed and embedded.
+func (p *Profile) Encode() ([]byte, error) {
+	if p.Version == 0 {
+		return nil, ErrInvalidVersion
 	}
 
 	// arrange tags in order of increasing length and merge duplicates
@@ -45,10 +51,10 @@ func (p *Profile) Encode() []byte {
 		})
 	}
 	sort.Slice(tags, func(i, j int) bool {
-		if len(tags[i].data) != len(tags[j].data) {
-			return len(tags[i].data) < len(tags[j].data)
+		if cmp := bytes.Compare(tags[i].data, tags[j].data); cmp != 0 {
+			return cmp < 0
 		}
-		return bytes.Compare(tags[i].data, tags[j].data) < 0
+		return tags[i].tagType < tags[j].tagType
 	})
 	pos := 128 + 4 + len(tags)*12
 	for i := range tags {
@@ -63,8 +69,8 @@ func (p *Profile) Encode() []byte {
 
 	buf := make([]byte, pos)
 	putUint32(buf, 0, uint32(pos))
-	putUint32(buf, 4, p.PreferedCMMType)
-	putUint32(buf, 8, uint32(version))
+	putUint32(buf, 4, p.PreferredCMMType)
+	putUint32(buf, 8, uint32(p.Version))
 	putUint32(buf, 12, uint32(p.Class))
 	putUint32(buf, 16, uint32(p.ColorSpace))
 	putUint32(buf, 20, uint32(p.PCS))
@@ -74,7 +80,10 @@ func (p *Profile) Encode() []byte {
 	putUint32(buf, 48, p.DeviceManufacturer)
 	putUint32(buf, 52, p.DeviceModel)
 	putUint64(buf, 56, p.DeviceAttributes)
-	copy(buf[68:], d50)
+	// PCS illuminant (D50 white point as s15Fixed16)
+	putS15Fixed16(buf, 68, d50WhitePoint[0])
+	putS15Fixed16(buf, 72, d50WhitePoint[1])
+	putS15Fixed16(buf, 76, d50WhitePoint[2])
 	putUint32(buf, 80, p.Creator)
 
 	putUint32(buf, 128, uint32(len(tags)))
@@ -88,7 +97,7 @@ func (p *Profile) Encode() []byte {
 		}
 	}
 
-	if version >= Version4_0_0 {
+	if p.Version >= Version4_0_0 {
 		// The entire profile, whose length is given by the size field in the
 		// header, with the profile flags field, rendering intent field, and
 		// profile ID field in the profile header temporarily set to zeros shall be
@@ -100,12 +109,7 @@ func (p *Profile) Encode() []byte {
 	putUint32(buf, 44, p.Flags)
 	putUint32(buf, 64, uint32(p.RenderingIntent))
 
-	return buf
-}
-
-// This is the value for the "PCS illuminant" header field (Bytes 68 to 79).
-var d50 = []byte{
-	0x00, 0x00, 0xf6, 0xd6, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0xd3, 0x2d,
+	return buf, nil
 }
 
 func putUint32(data []byte, offset int, value uint32) {
@@ -130,9 +134,14 @@ func putDateTime(data []byte, offset int, t time.Time) {
 	year := t.Year()
 	data[offset] = byte(year >> 8)
 	data[offset+1] = byte(year)
+	data[offset+2] = 0
 	data[offset+3] = byte(t.Month())
+	data[offset+4] = 0
 	data[offset+5] = byte(t.Day())
+	data[offset+6] = 0
 	data[offset+7] = byte(t.Hour())
+	data[offset+8] = 0
 	data[offset+9] = byte(t.Minute())
+	data[offset+10] = 0
 	data[offset+11] = byte(t.Second())
 }

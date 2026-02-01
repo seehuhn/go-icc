@@ -22,7 +22,7 @@ import (
 	"os"
 	"slices"
 
-	"golang.org/x/exp/maps"
+	"maps"
 	"seehuhn.de/go/icc"
 )
 
@@ -55,8 +55,8 @@ func show(fname string) error {
 	}
 
 	fmt.Printf("Profile: %s\n", fname)
-	if p.PreferedCMMType != 0 {
-		fmt.Printf("  PreferedCMMType: %s\n", tag(p.PreferedCMMType))
+	if p.PreferredCMMType != 0 {
+		fmt.Printf("  PreferedCMMType: %s\n", tag(p.PreferredCMMType))
 	}
 	fmt.Printf("  Version: %s\n", p.Version)
 	fmt.Printf("  Class: %s\n", p.Class)
@@ -89,7 +89,7 @@ func show(fname string) error {
 
 	fmt.Println()
 
-	tags := maps.Keys(p.TagData)
+	tags := slices.Collect(maps.Keys(p.TagData))
 	slices.Sort(tags)
 	for _, t := range tags {
 		data := p.TagData[t]

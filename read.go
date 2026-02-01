@@ -23,8 +23,13 @@ import (
 	"time"
 )
 
-// Decode decodes an ICC profile from the given data.
-// The function takes over ownership of the data.
+// Decode reads an ICC profile from binary data.
+//
+// The function takes ownership of the data slice; the caller should not
+// modify it after calling Decode. If the profile contains a checksum,
+// it is verified and the result is stored in the CheckSum field.
+//
+// Returns an [InvalidProfileError] if the data is malformed.
 func Decode(data []byte) (*Profile, error) {
 	if len(data) < 128+4 {
 		return nil, invalidProfile(0, "profile is too short")
@@ -45,7 +50,7 @@ func Decode(data []byte) (*Profile, error) {
 	// }
 
 	p := &Profile{
-		PreferedCMMType:    getUint32(data, 4),
+		PreferredCMMType:   getUint32(data, 4),
 		Version:            Version(getUint32(data, 8)),
 		Class:              ProfileClass(getUint32(data, 12)),
 		ColorSpace:         ColorSpace(getUint32(data, 16)),

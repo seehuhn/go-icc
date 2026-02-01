@@ -27,8 +27,36 @@ func (t TagType) String() string {
 		return "Profile Description"
 	case Copyright:
 		return "Copyright"
-	case ChromaticAdaption:
-		return "Chromatic Adaption"
+	case ChromaticAdaptation:
+		return "Chromatic Adaptation"
+	case RedMatrixColumn:
+		return "Red Matrix Column"
+	case GreenMatrixColumn:
+		return "Green Matrix Column"
+	case BlueMatrixColumn:
+		return "Blue Matrix Column"
+	case RedTRC:
+		return "Red TRC"
+	case GreenTRC:
+		return "Green TRC"
+	case BlueTRC:
+		return "Blue TRC"
+	case GrayTRC:
+		return "Gray TRC"
+	case MediaWhitePoint:
+		return "Media White Point"
+	case AToB0:
+		return "A to B0"
+	case AToB1:
+		return "A to B1"
+	case AToB2:
+		return "A to B2"
+	case BToA0:
+		return "B to A0"
+	case BToA1:
+		return "B to A1"
+	case BToA2:
+		return "B to A2"
 	default:
 		bb := []byte{
 			byte(t >> 24),
@@ -52,9 +80,27 @@ func (t TagType) String() string {
 
 // Some tag types defined in the ICC specification.
 const (
-	ProfileDescription TagType = 0x64657363 // "desc"
-	Copyright          TagType = 0x63707274 // "cprt"
-	ChromaticAdaption  TagType = 0x63686164 // "chad"
+	ProfileDescription  TagType = 0x64657363 // "desc"
+	Copyright           TagType = 0x63707274 // "cprt"
+	ChromaticAdaptation TagType = 0x63686164 // "chad"
+
+	// Matrix/TRC profile tags
+	RedMatrixColumn   TagType = 0x7258595A // "rXYZ"
+	GreenMatrixColumn TagType = 0x6758595A // "gXYZ"
+	BlueMatrixColumn  TagType = 0x6258595A // "bXYZ"
+	RedTRC            TagType = 0x72545243 // "rTRC"
+	GreenTRC          TagType = 0x67545243 // "gTRC"
+	BlueTRC           TagType = 0x62545243 // "bTRC"
+	GrayTRC           TagType = 0x6B545243 // "kTRC"
+	MediaWhitePoint   TagType = 0x77747074 // "wtpt"
+
+	// LUT-based profile tags
+	AToB0 TagType = 0x41324230 // "A2B0" - Perceptual
+	AToB1 TagType = 0x41324231 // "A2B1" - Relative Colorimetric
+	AToB2 TagType = 0x41324232 // "A2B2" - Saturation
+	BToA0 TagType = 0x42324130 // "B2A0" - Perceptual
+	BToA1 TagType = 0x42324131 // "B2A1" - Relative Colorimetric
+	BToA2 TagType = 0x42324132 // "B2A2" - Saturation
 )
 
 // Copyright returns the contents of the copyright tag.

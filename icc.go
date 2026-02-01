@@ -14,6 +14,39 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+// Package icc reads and writes ICC colour profiles.
+//
+// ICC profiles describe how to convert colours between device colour spaces
+// (such as RGB or CMYK) and a device-independent Profile Connection Space (PCS).
+// The PCS is either CIEXYZ or CIELAB, both based on the D50 illuminant.
+//
+// # Reading and Writing Profiles
+//
+// Use [Decode] to read an ICC profile from binary data, and [Profile.Encode]
+// to convert a profile back to binary form:
+//
+//	p, err := icc.Decode(data)
+//	if err != nil {
+//	    // handle error
+//	}
+//	// inspect p.Class, p.ColorSpace, p.Version, p.TagData, etc.
+//
+//	encoded, err := p.Encode()
+//
+// # Colour Transformations
+//
+// To convert colours using a profile, create a [Transform] with [NewTransform]:
+//
+//	t, err := icc.NewTransform(p, icc.DeviceToPCS, icc.Perceptual)
+//	if err != nil {
+//	    // handle error
+//	}
+//	X, Y, Z := t.ToXYZ([]float64{r, g, b})  // device RGB to PCS XYZ
+//
+// For the reverse direction:
+//
+//	t, err := icc.NewTransform(p, icc.PCSToDevice, icc.Perceptual)
+//	rgb := t.FromXYZ(X, Y, Z)  // PCS XYZ to device RGB
 package icc
 
 import (
@@ -21,13 +54,18 @@ import (
 	"time"
 )
 
-// Profile represents the data stored in an ICC profile.
+// Profile represents an ICC colour profile.
+//
+// The header fields (Version, Class, ColorSpace, etc.) describe the profile's
+// characteristics. The TagData map contains the raw binary data for each tag
+// in the profile; use [DecodeCurve], [DecodeLUT], or [NewTransform] to
+// interpret tag data for colour transformations.
 type Profile struct {
-	PreferedCMMType    uint32
+	PreferredCMMType   uint32
 	Version            Version
 	Class              ProfileClass
-	ColorSpace         ColorSpace
-	PCS                ColorSpace
+	ColorSpace         ColorSpace // device colour space (e.g. RGBSpace, CMYKSpace)
+	PCS                ColorSpace // Profile Connection Space (PCSXYZSpace or PCSLabSpace)
 	CreationDate       time.Time
 	PrimaryPlatform    uint32
 	Flags              uint32
@@ -37,8 +75,11 @@ type Profile struct {
 	RenderingIntent    RenderingIntent
 	Creator            uint32
 
+	// CheckSum indicates whether the profile's embedded checksum is valid.
+	// This is only meaningful for profiles read using Decode.
 	CheckSum CheckSum
 
+	// TagData maps tag signatures to their raw binary data.
 	TagData map[TagType][]byte
 }
 
@@ -108,7 +149,7 @@ const (
 	NamedColorProfile ProfileClass = 0x6E6D636C // "nmcl"
 )
 
-// RenderingIntent is the ICC rendering intent.
+// RenderingIntent specifies how colours outside the destination gamut are handled.
 type RenderingIntent uint32
 
 func (ri RenderingIntent) String() string {
@@ -126,15 +167,15 @@ func (ri RenderingIntent) String() string {
 	}
 }
 
-// The ICC rendering intents.
+// Standard ICC rendering intents.
 const (
-	Perceptual           RenderingIntent = 0
-	RelativeColorimetric RenderingIntent = 1
-	Saturation           RenderingIntent = 2
-	AbsoluteColorimetric RenderingIntent = 3
+	Perceptual           RenderingIntent = 0 // preserves visual relationships between colours
+	RelativeColorimetric RenderingIntent = 1 // maps white point, preserves in-gamut colours
+	Saturation           RenderingIntent = 2 // preserves saturation, may shift hue
+	AbsoluteColorimetric RenderingIntent = 3 // preserves exact colorimetric values
 )
 
-// ColorSpace represents an color space in an ICC profile.
+// ColorSpace identifies a colour space in an ICC profile.
 type ColorSpace uint32
 
 func (s ColorSpace) String() string {
@@ -316,3 +357,7 @@ const (
 	CheckSumValid
 	CheckSumInvalid
 )
+
+// d50WhitePoint is the CIE standard illuminant D50 white point in XYZ coordinates.
+// This is the reference illuminant for the ICC Profile Connection Space.
+var d50WhitePoint = [3]float64{0.9642, 1.0, 0.8249}
