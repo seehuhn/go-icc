@@ -183,6 +183,85 @@ func TestSRGBProfilesPrimaries(t *testing.T) {
 	}
 }
 
+func TestCGATS001ProfileDecode(t *testing.T) {
+	p, err := Decode(CGATS001Profile)
+	if err != nil {
+		t.Fatalf("decode failed: %v", err)
+	}
+
+	if p.Class != InputDeviceProfile {
+		t.Errorf("class = %v, want InputDeviceProfile", p.Class)
+	}
+	if p.ColorSpace != CMYKSpace {
+		t.Errorf("color space = %v, want CMYK", p.ColorSpace)
+	}
+	if p.PCS != PCSLabSpace {
+		t.Errorf("PCS = %v, want PCSLab", p.PCS)
+	}
+	if p.Version < Version2_1_0 {
+		t.Errorf("version = %v, want >= %v", p.Version, Version2_1_0)
+	}
+}
+
+func TestCGATS001ProfileRoundTrip(t *testing.T) {
+	p, err := Decode(CGATS001Profile)
+	if err != nil {
+		t.Fatalf("decode failed: %v", err)
+	}
+
+	encoded, err := p.Encode()
+	if err != nil {
+		t.Fatalf("encode failed: %v", err)
+	}
+
+	q, err := Decode(encoded)
+	if err != nil {
+		t.Fatalf("re-decode failed: %v", err)
+	}
+
+	p.CheckSum = CheckSumMissing
+	q.CheckSum = CheckSumMissing
+
+	if diff := cmp.Diff(p, q); diff != "" {
+		t.Errorf("round-trip mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestCGATS001ProfileTransform(t *testing.T) {
+	p, err := Decode(CGATS001Profile)
+	if err != nil {
+		t.Fatalf("decode failed: %v", err)
+	}
+
+	tr, err := NewTransform(p, DeviceToPCS, Perceptual)
+	if err != nil {
+		t.Fatalf("NewTransform failed: %v", err)
+	}
+
+	// CMYK white (no ink) should map near D50
+	X, Y, Z := tr.ToXYZ([]float64{0, 0, 0, 0})
+	if math.Abs(X-0.9642) > 0.02 || math.Abs(Y-1.0) > 0.02 || math.Abs(Z-0.8249) > 0.02 {
+		t.Errorf("white (0,0,0,0) -> XYZ = (%v, %v, %v), want near D50", X, Y, Z)
+	}
+
+	// CMYK black (full K) should map near zero
+	X, Y, Z = tr.ToXYZ([]float64{0, 0, 0, 1})
+	if X > 0.05 || Y > 0.05 || Z > 0.05 {
+		t.Errorf("black (0,0,0,1) -> XYZ = (%v, %v, %v), want near zero", X, Y, Z)
+	}
+
+	// yellow should have higher luminance than cyan or magenta
+	_, yC, _ := tr.ToXYZ([]float64{1, 0, 0, 0})
+	_, yM, _ := tr.ToXYZ([]float64{0, 1, 0, 0})
+	_, yY, _ := tr.ToXYZ([]float64{0, 0, 1, 0})
+	if yY <= yC {
+		t.Errorf("yellow luminance (%v) <= cyan luminance (%v)", yY, yC)
+	}
+	if yY <= yM {
+		t.Errorf("yellow luminance (%v) <= magenta luminance (%v)", yY, yM)
+	}
+}
+
 func TestSRGBProfilesDeviceRoundTrip(t *testing.T) {
 	for _, tt := range []struct {
 		name string

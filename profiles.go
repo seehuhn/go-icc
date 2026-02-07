@@ -18,21 +18,24 @@ package icc
 
 import _ "embed"
 
-// Built-in sRGB ICC profiles.
+// Built-in ICC profiles.
+//
+// All profile data is from https://github.com/saucecontrol/Compact-ICC-Profiles
+// and is in the public domain (CC0 1.0).
 var (
 	// SRGBv2Profile contains a compact sRGB ICC profile using ICC version 2.
 	//
-	// The profile data is from https://github.com/saucecontrol/Compact-ICC-Profiles
-	// and is in the public domain (CC0 1.0).
-	//
-	//go:embed sRGB-v2-micro.icc
+	//go:embed profiles/sRGB-v2-micro.icc
 	SRGBv2Profile []byte
 
 	// SRGBv4Profile contains a compact sRGB ICC profile using ICC version 4.
 	//
-	// The profile data is from https://github.com/saucecontrol/Compact-ICC-Profiles
-	// and is in the public domain (CC0 1.0).
-	//
-	//go:embed sRGB-v4.icc
+	//go:embed profiles/sRGB-v4.icc
 	SRGBv4Profile []byte
+
+	// CGATS001Profile contains a compact CMYK ICC profile using ICC version 2.
+	// The profile is compatible with the CGATS TR 001 (SWOP) specification.
+	//
+	//go:embed profiles/CGATS001Compat-v2-micro.icc
+	CGATS001Profile []byte
 )

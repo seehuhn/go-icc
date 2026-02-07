@@ -1,4 +1,5 @@
-The files sRGB-v2-micro.icc and sRGB-v4.icc were downloaded from
+The files sRGB-v2-micro.icc, sRGB-v4.icc and
+CGATS001Compat-v2-micro.icc were downloaded from
 https://github.com/saucecontrol/Compact-ICC-Profiles .
 
 The author put these files in the public domain, using the Creative Commons
