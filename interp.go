@@ -94,7 +94,7 @@ func tetrahedralInterp3D(clut []float64, gridSize int, outChannels int, r, g, b 
 	if fr > fg {
 		if fg > fb {
 			// fr > fg > fb: tetrahedron 1
-			for i := 0; i < outChannels; i++ {
+			for i := range outChannels {
 				out[i] = (1-fr)*clut[c000+i] +
 					(fr-fg)*clut[c100+i] +
 					(fg-fb)*clut[c110+i] +
@@ -102,7 +102,7 @@ func tetrahedralInterp3D(clut []float64, gridSize int, outChannels int, r, g, b 
 			}
 		} else if fr > fb {
 			// fr > fb >= fg: tetrahedron 2
-			for i := 0; i < outChannels; i++ {
+			for i := range outChannels {
 				out[i] = (1-fr)*clut[c000+i] +
 					(fr-fb)*clut[c100+i] +
 					(fb-fg)*clut[c101+i] +
@@ -110,7 +110,7 @@ func tetrahedralInterp3D(clut []float64, gridSize int, outChannels int, r, g, b 
 			}
 		} else {
 			// fb >= fr > fg: tetrahedron 3
-			for i := 0; i < outChannels; i++ {
+			for i := range outChannels {
 				out[i] = (1-fb)*clut[c000+i] +
 					(fb-fr)*clut[c001+i] +
 					(fr-fg)*clut[c101+i] +
@@ -120,7 +120,7 @@ func tetrahedralInterp3D(clut []float64, gridSize int, outChannels int, r, g, b 
 	} else {
 		if fr > fb {
 			// fg >= fr > fb: tetrahedron 4
-			for i := 0; i < outChannels; i++ {
+			for i := range outChannels {
 				out[i] = (1-fg)*clut[c000+i] +
 					(fg-fr)*clut[c010+i] +
 					(fr-fb)*clut[c110+i] +
@@ -128,7 +128,7 @@ func tetrahedralInterp3D(clut []float64, gridSize int, outChannels int, r, g, b 
 			}
 		} else if fg > fb {
 			// fg > fb >= fr: tetrahedron 5
-			for i := 0; i < outChannels; i++ {
+			for i := range outChannels {
 				out[i] = (1-fg)*clut[c000+i] +
 					(fg-fb)*clut[c010+i] +
 					(fb-fr)*clut[c011+i] +
@@ -136,7 +136,7 @@ func tetrahedralInterp3D(clut []float64, gridSize int, outChannels int, r, g, b 
 			}
 		} else {
 			// fb >= fg >= fr: tetrahedron 6
-			for i := 0; i < outChannels; i++ {
+			for i := range outChannels {
 				out[i] = (1-fb)*clut[c000+i] +
 					(fb-fg)*clut[c001+i] +
 					(fg-fr)*clut[c011+i] +
@@ -168,18 +168,12 @@ func multilinearInterp(clut []float64, gridPoints []int, outChannels int, input 
 	// compute grid positions and fractions
 	indices := make([]int, nDims)
 	fracs := make([]float64, nDims)
-	for i := 0; i < nDims; i++ {
+	for i := range nDims {
 		scale := float64(gridPoints[i] - 1)
 		pos := input[i] * scale
-		idx := int(pos)
-		if idx < 0 {
-			idx = 0
-		}
+		idx := max(int(pos), 0)
 		if idx >= gridPoints[i]-1 {
-			idx = gridPoints[i] - 2
-			if idx < 0 {
-				idx = 0
-			}
+			idx = max(gridPoints[i]-2, 0)
 		}
 		indices[i] = idx
 		fracs[i] = clamp(pos-float64(idx), 0, 1)
@@ -189,11 +183,11 @@ func multilinearInterp(clut []float64, gridPoints []int, outChannels int, input 
 	numCorners := 1 << nDims
 	out := make([]float64, outChannels)
 
-	for corner := 0; corner < numCorners; corner++ {
+	for corner := range numCorners {
 		// compute offset and weight for this corner
 		offset := 0
 		weight := 1.0
-		for d := 0; d < nDims; d++ {
+		for d := range nDims {
 			if corner&(1<<d) != 0 {
 				offset += strides[d]
 				weight *= fracs[d]
@@ -204,11 +198,11 @@ func multilinearInterp(clut []float64, gridPoints []int, outChannels int, input 
 
 		// base offset
 		baseOffset := 0
-		for d := 0; d < nDims; d++ {
+		for d := range nDims {
 			baseOffset += indices[d] * strides[d]
 		}
 
-		for i := 0; i < outChannels; i++ {
+		for i := range outChannels {
 			idx := baseOffset + offset + i
 			if idx < len(clut) {
 				out[i] += weight * clut[idx]

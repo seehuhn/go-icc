@@ -51,17 +51,17 @@ func TestDecodeLut8(t *testing.T) {
 
 	// identity input tables (256 entries per channel)
 	offset := 48
-	for ch := 0; ch < inputChannels; ch++ {
-		for i := 0; i < 256; i++ {
+	for ch := range inputChannels {
+		for i := range 256 {
 			data[offset+ch*256+i] = byte(i)
 		}
 	}
 	offset += inputTableSize
 
 	// identity CLUT (2x2x2 grid, output = input)
-	for r := 0; r < clutPoints; r++ {
-		for g := 0; g < clutPoints; g++ {
-			for b := 0; b < clutPoints; b++ {
+	for r := range clutPoints {
+		for g := range clutPoints {
+			for b := range clutPoints {
 				idx := offset + (r*clutPoints*clutPoints+g*clutPoints+b)*outputChannels
 				data[idx+0] = byte(r * 255)
 				data[idx+1] = byte(g * 255)
@@ -72,8 +72,8 @@ func TestDecodeLut8(t *testing.T) {
 	offset += clutSize
 
 	// identity output tables
-	for ch := 0; ch < outputChannels; ch++ {
-		for i := 0; i < 256; i++ {
+	for ch := range outputChannels {
+		for i := range 256 {
 			data[offset+ch*256+i] = byte(i)
 		}
 	}
@@ -108,7 +108,7 @@ func TestDecodeLut8(t *testing.T) {
 
 	for _, input := range tests {
 		output := lut.Apply(input)
-		for i := 0; i < 3; i++ {
+		for i := range 3 {
 			if math.Abs(output[i]-input[i]) > 0.02 {
 				t.Errorf("Apply(%v) = %v, want ~%v", input, output, input)
 				break
@@ -152,8 +152,8 @@ func TestDecodeLut16(t *testing.T) {
 
 	// linear input tables
 	offset := 52
-	for ch := 0; ch < inputChannels; ch++ {
-		for i := 0; i < tableEntries; i++ {
+	for ch := range inputChannels {
+		for i := range tableEntries {
 			val := uint16(float64(i) / float64(tableEntries-1) * 65535)
 			putUint16(data, offset+(ch*tableEntries+i)*2, val)
 		}
@@ -161,9 +161,9 @@ func TestDecodeLut16(t *testing.T) {
 	offset += inputTableSize
 
 	// identity CLUT
-	for r := 0; r < clutPoints; r++ {
-		for g := 0; g < clutPoints; g++ {
-			for b := 0; b < clutPoints; b++ {
+	for r := range clutPoints {
+		for g := range clutPoints {
+			for b := range clutPoints {
 				idx := offset + (r*clutPoints*clutPoints+g*clutPoints+b)*outputChannels*2
 				putUint16(data, idx+0, uint16(r*65535))
 				putUint16(data, idx+2, uint16(g*65535))
@@ -174,8 +174,8 @@ func TestDecodeLut16(t *testing.T) {
 	offset += clutSize
 
 	// linear output tables
-	for ch := 0; ch < outputChannels; ch++ {
-		for i := 0; i < tableEntries; i++ {
+	for ch := range outputChannels {
+		for i := range tableEntries {
 			val := uint16(float64(i) / float64(tableEntries-1) * 65535)
 			putUint16(data, offset+(ch*tableEntries+i)*2, val)
 		}
@@ -193,7 +193,7 @@ func TestDecodeLut16(t *testing.T) {
 	// test identity
 	input := []float64{0.5, 0.5, 0.5}
 	output := lut.Apply(input)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if math.Abs(output[i]-input[i]) > 0.02 {
 			t.Errorf("Apply(%v) = %v, want ~%v", input, output, input)
 			break
@@ -231,9 +231,9 @@ func TestLutAToBApplyWithMCurves(t *testing.T) {
 	// build identity CLUT
 	clutSize := 2 * 2 * 2 * 3
 	lut.clut = make([]float64, clutSize)
-	for r := 0; r < 2; r++ {
-		for g := 0; g < 2; g++ {
-			for b := 0; b < 2; b++ {
+	for r := range 2 {
+		for g := range 2 {
+			for b := range 2 {
 				idx := (r*4 + g*2 + b) * 3
 				lut.clut[idx+0] = float64(r)
 				lut.clut[idx+1] = float64(g)
@@ -248,7 +248,7 @@ func TestLutAToBApplyWithMCurves(t *testing.T) {
 
 	// expected: 0.5^2.0 = 0.25
 	expected := 0.25
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if math.Abs(output[i]-expected) > 0.02 {
 			t.Errorf("Apply(%v)[%d] = %v, want ~%v", input, i, output[i], expected)
 		}

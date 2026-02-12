@@ -171,9 +171,9 @@ func TestTetrahedralInterp3D(t *testing.T) {
 	clut := make([]float64, gridSize*gridSize*gridSize*outChannels)
 
 	// fill CLUT with identity mapping
-	for r := 0; r < gridSize; r++ {
-		for g := 0; g < gridSize; g++ {
-			for b := 0; b < gridSize; b++ {
+	for r := range gridSize {
+		for g := range gridSize {
+			for b := range gridSize {
 				idx := (r*gridSize*gridSize + g*gridSize + b) * outChannels
 				clut[idx+0] = float64(r) / float64(gridSize-1)
 				clut[idx+1] = float64(g) / float64(gridSize-1)
@@ -191,7 +191,7 @@ func TestTetrahedralInterp3D(t *testing.T) {
 
 	for _, tt := range tests {
 		result := tetrahedralInterp3D(clut, gridSize, outChannels, tt[0], tt[1], tt[2])
-		for i := 0; i < 3; i++ {
+		for i := range 3 {
 			if math.Abs(result[i]-tt[i]) > 0.01 {
 				t.Errorf("tetrahedral(%v) = %v, want %v", tt, result, tt)
 				break
@@ -207,9 +207,9 @@ func TestMultilinearInterp(t *testing.T) {
 	size := 3 * 3 * 3 * outChannels
 	clut := make([]float64, size)
 
-	for r := 0; r < 3; r++ {
-		for g := 0; g < 3; g++ {
-			for b := 0; b < 3; b++ {
+	for r := range 3 {
+		for g := range 3 {
+			for b := range 3 {
 				idx := (r*9 + g*3 + b) * outChannels
 				clut[idx+0] = float64(r) / 2.0
 				clut[idx+1] = float64(g) / 2.0
@@ -227,7 +227,7 @@ func TestMultilinearInterp(t *testing.T) {
 
 	for _, tt := range tests {
 		result := multilinearInterp(clut, gridPoints, outChannels, tt)
-		for i := 0; i < 3; i++ {
+		for i := range 3 {
 			if math.Abs(result[i]-tt[i]) > 0.01 {
 				t.Errorf("multilinear(%v) = %v, want %v", tt, result, tt)
 				break
@@ -328,10 +328,10 @@ func TestInvertMatrix3x3(t *testing.T) {
 	inv = invertMatrix3x3(srgbToXYZ)
 
 	// multiply should give identity
-	for i := 0; i < 3; i++ {
-		for j := 0; j < 3; j++ {
+	for i := range 3 {
+		for j := range 3 {
 			sum := 0.0
-			for k := 0; k < 3; k++ {
+			for k := range 3 {
 				sum += srgbToXYZ[i*3+k] * inv[k*3+j]
 			}
 			expected := 0.0
