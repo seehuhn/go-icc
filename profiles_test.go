@@ -262,6 +262,54 @@ func TestCGATS001ProfileTransform(t *testing.T) {
 	}
 }
 
+func TestFromXYZInto(t *testing.T) {
+	type testProfile struct {
+		name string
+		data []byte
+	}
+	profiles := []testProfile{
+		{"sRGB-v2", SRGBv2Profile},
+		{"sRGB-v4", SRGBv4Profile},
+	}
+
+	xyzInputs := [][3]float64{
+		{0, 0, 0},
+		{0.9642, 1.0, 0.8249}, // D50 white
+		{0.4361, 0.2225, 0.0139},
+		{0.2, 0.4, 0.6},
+		{0.5, 0.5, 0.5},
+	}
+
+	for _, pp := range profiles {
+		t.Run(pp.name, func(t *testing.T) {
+			p, err := Decode(pp.data)
+			if err != nil {
+				t.Fatalf("decode failed: %v", err)
+			}
+
+			tr, err := NewTransform(p, PCSToDevice, Perceptual)
+			if err != nil {
+				t.Fatalf("NewTransform failed: %v", err)
+			}
+
+			nCh := tr.Channels()
+			dst := make([]float64, nCh)
+
+			for _, xyz := range xyzInputs {
+				want := tr.FromXYZ(xyz[0], xyz[1], xyz[2])
+				tr.FromXYZInto(xyz[0], xyz[1], xyz[2], dst)
+
+				for i := range nCh {
+					if dst[i] != want[i] {
+						t.Errorf("XYZ(%v): FromXYZInto[%d] = %v, FromXYZ = %v",
+							xyz, i, dst[i], want[i])
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestSRGBProfilesDeviceRoundTrip(t *testing.T) {
 	for _, tt := range []struct {
 		name string

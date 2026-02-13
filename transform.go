@@ -426,6 +426,43 @@ func (t *Transform) FromXYZ(X, Y, Z float64) []float64 {
 	return t.Apply(input)
 }
 
+// FromXYZInto converts PCS XYZ (D50) to device colour, writing into dst.
+// The dst slice must have length >= Channels().
+// This avoids allocations in per-pixel loops.
+func (t *Transform) FromXYZInto(X, Y, Z float64, dst []float64) {
+	if t.direction != PCSToDevice {
+		return
+	}
+
+	switch t.profileType {
+	case profileTypeMatrixTRC:
+		// XYZ -> inverse matrix -> inverse TRC
+		r := t.matrixInv[0]*X + t.matrixInv[1]*Y + t.matrixInv[2]*Z
+		g := t.matrixInv[3]*X + t.matrixInv[4]*Y + t.matrixInv[5]*Z
+		b := t.matrixInv[6]*X + t.matrixInv[7]*Y + t.matrixInv[8]*Z
+		dst[0] = clamp(t.trcInv[0].Invert(clamp(r, 0, 1)), 0, 1)
+		dst[1] = clamp(t.trcInv[1].Invert(clamp(g, 0, 1)), 0, 1)
+		dst[2] = clamp(t.trcInv[2].Invert(clamp(b, 0, 1)), 0, 1)
+
+	case profileTypeGrayTRC:
+		y := Y
+		if t.whitePoint[1] != 0 {
+			y /= t.whitePoint[1]
+		}
+		dst[0] = t.grayTRCInv.Invert(clamp(y, 0, 1))
+
+	default:
+		// LUT-based: fall back to allocating path
+		result := t.FromXYZ(X, Y, Z)
+		copy(dst, result)
+	}
+}
+
+// Channels returns the number of device colour channels for this transform.
+func (t *Transform) Channels() int {
+	return t.profile.ColorSpace.NumComponents()
+}
+
 // labToXYZ converts Lab to XYZ using the given white point.
 // Lab values: L in [0, 100], a and b in [-128, 127].
 func labToXYZ(lab []float64, white [3]float64) (X, Y, Z float64) {
