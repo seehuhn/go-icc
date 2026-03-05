@@ -97,14 +97,12 @@ func (p *Profile) Encode() ([]byte, error) {
 		}
 	}
 
-	if p.Version >= Version4_0_0 {
-		// The entire profile, whose length is given by the size field in the
-		// header, with the profile flags field, rendering intent field, and
-		// profile ID field in the profile header temporarily set to zeros shall be
-		// used to calculate the ID.
-		h := md5.Sum(buf)
-		copy(buf[84:], h[:])
-	}
+	// The entire profile, whose length is given by the size field in the
+	// header, with the profile flags field, rendering intent field, and
+	// profile ID field in the profile header temporarily set to zeros shall be
+	// used to calculate the ID.
+	h := md5.Sum(buf)
+	copy(buf[84:], h[:])
 
 	putUint32(buf, 44, p.Flags)
 	putUint32(buf, 64, uint32(p.RenderingIntent))

@@ -50,6 +50,7 @@
 package icc
 
 import (
+	"bytes"
 	"fmt"
 	"time"
 )
@@ -81,6 +82,40 @@ type Profile struct {
 
 	// TagData maps tag signatures to their raw binary data.
 	TagData map[TagType][]byte
+}
+
+// Equal reports whether p and other have the same header fields and tag data.
+// The CheckSum field is ignored.
+func (p *Profile) Equal(other *Profile) bool {
+	if p == nil || other == nil {
+		return p == other
+	}
+	if p.PreferredCMMType != other.PreferredCMMType ||
+		p.Version != other.Version ||
+		p.Class != other.Class ||
+		p.ColorSpace != other.ColorSpace ||
+		p.PCS != other.PCS ||
+		!p.CreationDate.Equal(other.CreationDate) ||
+		p.PrimaryPlatform != other.PrimaryPlatform ||
+		p.Flags != other.Flags ||
+		p.DeviceManufacturer != other.DeviceManufacturer ||
+		p.DeviceModel != other.DeviceModel ||
+		p.DeviceAttributes != other.DeviceAttributes ||
+		p.RenderingIntent != other.RenderingIntent ||
+		p.Creator != other.Creator {
+		return false
+	}
+
+	if len(p.TagData) != len(other.TagData) {
+		return false
+	}
+	for tag, data := range p.TagData {
+		otherData, ok := other.TagData[tag]
+		if !ok || !bytes.Equal(data, otherData) {
+			return false
+		}
+	}
+	return true
 }
 
 // Version is a version of the ICC profile format.
