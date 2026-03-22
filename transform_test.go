@@ -345,6 +345,88 @@ func TestInvertMatrix3x3(t *testing.T) {
 	}
 }
 
+// makeGrayProfile creates a gray TRC profile with the given gamma and white point.
+func makeGrayProfile(gamma float64, whitePoint [3]float64) *Profile {
+	trcData := (&Curve{Gamma: gamma}).encodeCurveType()
+	wpData := make([]byte, 20)
+	copy(wpData[:4], "XYZ ")
+	putS15Fixed16(wpData, 8, whitePoint[0])
+	putS15Fixed16(wpData, 12, whitePoint[1])
+	putS15Fixed16(wpData, 16, whitePoint[2])
+	return &Profile{
+		ColorSpace: GraySpace,
+		PCS:        PCSXYZSpace,
+		TagData: map[TagType][]byte{
+			GrayTRC:         trcData,
+			MediaWhitePoint: wpData,
+		},
+	}
+}
+
+func TestGrayTRCNeutral(t *testing.T) {
+	// A gray profile with a D65 white point must produce neutral (achromatic)
+	// output when round-tripped through DeviceToPCS → PCSToDevice.
+	// This is a regression test: previously the D65 white point was used
+	// directly for XYZ scaling, producing a blue-tinted result.
+	d65WP := [3]float64{0.9505, 1.0, 1.0890}
+	p := makeGrayProfile(2.2, d65WP)
+
+	fwd, err := NewTransform(p, DeviceToPCS, Perceptual)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, gray := range []float64{0.0, 0.25, 0.5, 0.75, 0.992, 1.0} {
+		X, Y, Z := fwd.ToXYZ([]float64{gray})
+
+		// XYZ should be proportional to D50, not D65
+		if Y > 1e-6 {
+			ratioX := X / Y
+			ratioZ := Z / Y
+			wantRatioX := d50WhitePoint[0] / d50WhitePoint[1]
+			wantRatioZ := d50WhitePoint[2] / d50WhitePoint[1]
+			if math.Abs(ratioX-wantRatioX) > 1e-4 {
+				t.Errorf("gray %.3f: X/Y = %.6f, want %.6f (D50 ratio)",
+					gray, ratioX, wantRatioX)
+			}
+			if math.Abs(ratioZ-wantRatioZ) > 1e-4 {
+				t.Errorf("gray %.3f: Z/Y = %.6f, want %.6f (D50 ratio)",
+					gray, ratioZ, wantRatioZ)
+			}
+		}
+	}
+}
+
+func TestGrayTRCRoundTrip(t *testing.T) {
+	// round-trip DeviceToPCS → PCSToDevice must recover the original gray,
+	// regardless of the profile's media white point
+	for _, wp := range [][3]float64{
+		d50WhitePoint,
+		{0.9505, 1.0, 1.0890}, // D65
+		{0.9000, 1.0, 0.9000}, // arbitrary
+	} {
+		p := makeGrayProfile(2.2, wp)
+
+		fwd, err := NewTransform(p, DeviceToPCS, Perceptual)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rev, err := NewTransform(p, PCSToDevice, Perceptual)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		for _, gray := range []float64{0.0, 0.1, 0.5, 0.9, 1.0} {
+			X, Y, Z := fwd.ToXYZ([]float64{gray})
+			back := rev.FromXYZ(X, Y, Z)
+			if len(back) != 1 || math.Abs(back[0]-gray) > 1e-4 {
+				t.Errorf("wp=%v gray=%.1f: round-trip gave %.6f",
+					wp, gray, back[0])
+			}
+		}
+	}
+}
+
 func TestDecodeCurveType(t *testing.T) {
 	// curveType with n=0 (identity)
 	data := []byte{'c', 'u', 'r', 'v', 0, 0, 0, 0, 0, 0, 0, 0}

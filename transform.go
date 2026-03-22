@@ -346,29 +346,28 @@ func (t *Transform) applyMatrixTRC(input []float64) []float64 {
 }
 
 func (t *Transform) applyGrayTRC(input []float64) []float64 {
-	if len(input) != 1 {
-		return make([]float64, 1)
-	}
-
 	if t.direction == DeviceToPCS {
-		// apply TRC to get linear, then Y = linear value
-		// XYZ for gray is (0.9642*Y, Y, 0.8249*Y) scaled by D50 white
+		if len(input) != 1 {
+			return make([]float64, 3)
+		}
+		// apply TRC to get linear luminance
 		y := t.grayTRC.Evaluate(input[0])
+		// PCS is always D50-adapted XYZ.  The profile's media white
+		// point may differ from D50 (non-conforming but common), so
+		// always scale by D50 here.  This is equivalent to scaling by
+		// the media white point and then applying Bradford adaptation
+		// to D50, because Bradford maps WP*y → D50*y (linearity).
 		return []float64{
-			t.whitePoint[0] * y,
-			t.whitePoint[1] * y,
-			t.whitePoint[2] * y,
+			d50WhitePoint[0] * y,
+			d50WhitePoint[1] * y,
+			d50WhitePoint[2] * y,
 		}
 	}
 
-	// PCSToDevice: extract Y and apply inverse TRC
+	// PCSToDevice: extract Y from D50-adapted XYZ and apply inverse TRC
 	y := input[0]
 	if len(input) >= 2 {
 		y = input[1] // use Y from XYZ
-	}
-	// normalise by white point Y
-	if t.whitePoint[1] != 0 {
-		y /= t.whitePoint[1]
 	}
 	return []float64{t.grayTRCInv.Invert(clamp(y, 0, 1))}
 }
@@ -445,11 +444,8 @@ func (t *Transform) FromXYZInto(X, Y, Z float64, dst []float64) {
 		dst[2] = clamp(t.trcInv[2].Invert(clamp(b, 0, 1)), 0, 1)
 
 	case profileTypeGrayTRC:
-		y := Y
-		if t.whitePoint[1] != 0 {
-			y /= t.whitePoint[1]
-		}
-		dst[0] = t.grayTRCInv.Invert(clamp(y, 0, 1))
+		// PCS Y is D50-adapted; d50WhitePoint[1] is 1.0
+		dst[0] = t.grayTRCInv.Invert(clamp(Y, 0, 1))
 
 	default:
 		// LUT-based: fall back to allocating path
