@@ -19,23 +19,25 @@ package icc
 import _ "embed"
 
 // Built-in ICC profiles.
-//
-// All profile data is from https://github.com/saucecontrol/Compact-ICC-Profiles
-// and is in the public domain (CC0 1.0).
 var (
 	// SRGBv2Profile contains a compact sRGB ICC profile using ICC version 2.
+	// From https://github.com/saucecontrol/Compact-ICC-Profiles (CC0 1.0).
 	//
 	//go:embed profiles/sRGB-v2-micro.icc
 	SRGBv2Profile []byte
 
 	// SRGBv4Profile contains a compact sRGB ICC profile using ICC version 4.
+	// From https://github.com/saucecontrol/Compact-ICC-Profiles (CC0 1.0).
 	//
 	//go:embed profiles/sRGB-v4.icc
 	SRGBv4Profile []byte
 
-	// CGATS001Profile contains a compact CMYK ICC profile using ICC version 2.
-	// The profile is compatible with the CGATS TR 001 (SWOP) specification.
+	// CMYKProfile contains a CMYK ICC profile for US web-offset printing
+	// on coated paper (CGATS TR 005 / SWOP). The profile supports both
+	// device-to-PCS and PCS-to-device transforms.
+	// Generated from characterization data in the Debian icc-profiles-free
+	// package (zlib/libpng license). See profiles/Licenses.txt for details.
 	//
-	//go:embed profiles/CGATS001Compat-v2-micro.icc
-	CGATS001Profile []byte
+	//go:embed profiles/TR005.icc
+	CMYKProfile []byte
 )

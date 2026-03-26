@@ -1,7 +1,40 @@
-The files sRGB-v2-micro.icc, sRGB-v4.icc and
-CGATS001Compat-v2-micro.icc were downloaded from
-https://github.com/saucecontrol/Compact-ICC-Profiles .
+sRGB-v2-micro.icc and sRGB-v4.icc
+-----------------------------------
+
+Downloaded from https://github.com/saucecontrol/Compact-ICC-Profiles .
 
 The author put these files in the public domain, using the Creative Commons
 CC0 1.0 Universal (CC0 1.0) Public Domain Dedication:
 http://creativecommons.org/publicdomain/zero/1.0/
+
+
+TR005.icc
+---------
+
+Generated from characterization data (.ti3 files) in the Debian
+"icc-profiles-free" source package, version 2.0.1+dfsg, using
+ArgyllCMS colprof.
+
+Source: http://archive.ubuntu.com/ubuntu/pool/main/i/icc-profiles-free/icc-profiles-free_2.0.1+dfsg.orig.tar.bz2
+
+The characterization data is copyright Kai-Uwe Behrmann <www.behrmann.name>
+and distributed under the zlib/libpng license:
+
+  This software is provided 'as-is', without any express or implied
+  warranty. In no event will the authors be held liable for any damages
+  arising from the use of this software.
+
+  Permission is granted to anyone to use this software for any purpose,
+  including commercial applications, and to alter it and redistribute it
+  freely, subject to the following restrictions:
+
+     1. The origin of this software must not be misrepresented; you must
+        not claim that you wrote the original software. If you use this
+        software in a product, an acknowledgment in the product
+        documentation would be appreciated but is not required.
+
+     2. Altered source versions must be plainly marked as such, and must
+        not be misrepresented as being the original software.
+
+     3. This notice may not be removed or altered from any source
+        distribution.

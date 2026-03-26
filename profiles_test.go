@@ -183,14 +183,14 @@ func TestSRGBProfilesPrimaries(t *testing.T) {
 	}
 }
 
-func TestCGATS001ProfileDecode(t *testing.T) {
-	p, err := Decode(CGATS001Profile)
+func TestCMYKProfileDecode(t *testing.T) {
+	p, err := Decode(CMYKProfile)
 	if err != nil {
 		t.Fatalf("decode failed: %v", err)
 	}
 
-	if p.Class != InputDeviceProfile {
-		t.Errorf("class = %v, want InputDeviceProfile", p.Class)
+	if p.Class != OutputDeviceProfile {
+		t.Errorf("class = %v, want OutputDeviceProfile", p.Class)
 	}
 	if p.ColorSpace != CMYKSpace {
 		t.Errorf("color space = %v, want CMYK", p.ColorSpace)
@@ -198,13 +198,13 @@ func TestCGATS001ProfileDecode(t *testing.T) {
 	if p.PCS != PCSLabSpace {
 		t.Errorf("PCS = %v, want PCSLab", p.PCS)
 	}
-	if p.Version < Version2_1_0 {
-		t.Errorf("version = %v, want >= %v", p.Version, Version2_1_0)
+	if p.Version < Version2_2_0 {
+		t.Errorf("version = %v, want >= %v", p.Version, Version2_2_0)
 	}
 }
 
-func TestCGATS001ProfileRoundTrip(t *testing.T) {
-	p, err := Decode(CGATS001Profile)
+func TestCMYKProfileRoundTrip(t *testing.T) {
+	p, err := Decode(CMYKProfile)
 	if err != nil {
 		t.Fatalf("decode failed: %v", err)
 	}
@@ -227,8 +227,8 @@ func TestCGATS001ProfileRoundTrip(t *testing.T) {
 	}
 }
 
-func TestCGATS001ProfileTransform(t *testing.T) {
-	p, err := Decode(CGATS001Profile)
+func TestCMYKProfileTransform(t *testing.T) {
+	p, err := Decode(CMYKProfile)
 	if err != nil {
 		t.Fatalf("decode failed: %v", err)
 	}
@@ -238,16 +238,16 @@ func TestCGATS001ProfileTransform(t *testing.T) {
 		t.Fatalf("NewTransform failed: %v", err)
 	}
 
-	// CMYK white (no ink) should map near D50
+	// CMYK white (no ink) should have high luminance
 	X, Y, Z := tr.ToXYZ([]float64{0, 0, 0, 0})
-	if math.Abs(X-0.9642) > 0.02 || math.Abs(Y-1.0) > 0.02 || math.Abs(Z-0.8249) > 0.02 {
-		t.Errorf("white (0,0,0,0) -> XYZ = (%v, %v, %v), want near D50", X, Y, Z)
+	if Y < 0.5 {
+		t.Errorf("white (0,0,0,0) -> XYZ = (%v, %v, %v), want high luminance", X, Y, Z)
 	}
 
-	// CMYK black (full K) should map near zero
+	// CMYK black (full K) should have low luminance
 	X, Y, Z = tr.ToXYZ([]float64{0, 0, 0, 1})
-	if X > 0.05 || Y > 0.05 || Z > 0.05 {
-		t.Errorf("black (0,0,0,1) -> XYZ = (%v, %v, %v), want near zero", X, Y, Z)
+	if Y > 0.1 {
+		t.Errorf("black (0,0,0,1) -> XYZ = (%v, %v, %v), want low luminance", X, Y, Z)
 	}
 
 	// yellow should have higher luminance than cyan or magenta
