@@ -476,3 +476,96 @@ func TestDecodeParametricCurve(t *testing.T) {
 		t.Errorf("gamma param = %f, want %f", c.Params[0], expected)
 	}
 }
+
+func TestLutFallbackChain(t *testing.T) {
+	tests := []struct {
+		name   string
+		dir    Direction
+		intent RenderingIntent
+		want   []TagType
+	}{
+		{"DeviceToPCS/Perceptual", DeviceToPCS, Perceptual, []TagType{AToB0, AToB1, AToB2}},
+		{"DeviceToPCS/RelativeColorimetric", DeviceToPCS, RelativeColorimetric, []TagType{AToB1, AToB0, AToB2}},
+		{"DeviceToPCS/AbsoluteColorimetric", DeviceToPCS, AbsoluteColorimetric, []TagType{AToB1, AToB0, AToB2}},
+		{"DeviceToPCS/Saturation", DeviceToPCS, Saturation, []TagType{AToB2, AToB0, AToB1}},
+		{"PCSToDevice/Perceptual", PCSToDevice, Perceptual, []TagType{BToA0, BToA1, BToA2}},
+		{"PCSToDevice/RelativeColorimetric", PCSToDevice, RelativeColorimetric, []TagType{BToA1, BToA0, BToA2}},
+		{"PCSToDevice/Saturation", PCSToDevice, Saturation, []TagType{BToA2, BToA0, BToA1}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := lutFallbackChain(tc.dir, tc.intent)
+			if len(got) != len(tc.want) {
+				t.Fatalf("len = %d, want %d", len(got), len(tc.want))
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Errorf("chain[%d] = %v, want %v", i, got[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestInitLutFallback(t *testing.T) {
+	// build a minimal mAB tag (LutAToB) - 32 bytes header, no sub-tags
+	mABTag := func() []byte {
+		b := make([]byte, 32)
+		copy(b[0:4], "mAB ")
+		b[8] = 3 // input channels
+		b[9] = 3 // output channels
+		return b
+	}
+
+	tests := []struct {
+		name    string
+		tags    map[TagType][]byte
+		dir     Direction
+		intent  RenderingIntent
+		wantErr bool
+	}{
+		{
+			name:   "AToB1 only, perceptual requested",
+			tags:   map[TagType][]byte{AToB1: mABTag()},
+			dir:    DeviceToPCS,
+			intent: Perceptual,
+		},
+		{
+			name:   "AToB2 only, relative requested",
+			tags:   map[TagType][]byte{AToB2: mABTag()},
+			dir:    DeviceToPCS,
+			intent: RelativeColorimetric,
+		},
+		{
+			name:   "BToA1 only, perceptual requested",
+			tags:   map[TagType][]byte{BToA1: mABTag()},
+			dir:    PCSToDevice,
+			intent: Perceptual,
+		},
+		{
+			name:    "no LUT tags",
+			tags:    map[TagType][]byte{AToB0: mABTag()}, // wrong direction
+			dir:     PCSToDevice,
+			intent:  Perceptual,
+			wantErr: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			p := &Profile{
+				ColorSpace: RGBSpace,
+				PCS:        PCSXYZSpace,
+				TagData:    tc.tags,
+			}
+			_, err := NewTransform(p, tc.dir, tc.intent)
+			if tc.wantErr {
+				if err == nil {
+					t.Errorf("expected error, got nil")
+				}
+			} else if err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+		})
+	}
+}

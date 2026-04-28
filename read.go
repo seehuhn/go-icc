@@ -77,9 +77,7 @@ func Decode(data []byte) (*Profile, error) {
 		// shall be used to calculate the ID.
 		putUint32(data, 44, 0)
 		putUint32(data, 64, 0)
-		for i := 84; i < 100; i++ {
-			data[i] = 0
-		}
+		clear(data[84:100])
 
 		computedHash := md5.Sum(data)
 		if bytes.Equal(computedHash[:], givenHash[:]) {

@@ -229,38 +229,18 @@ func (t *Transform) initGrayTRC() error {
 func (t *Transform) initLut() error {
 	p := t.profile
 
-	// select appropriate LUT based on direction and intent
-	var tagType TagType
-	if t.direction == DeviceToPCS {
-		switch t.intent {
-		case Perceptual:
-			tagType = AToB0
-		case RelativeColorimetric, AbsoluteColorimetric:
-			tagType = AToB1
-		case Saturation:
-			tagType = AToB2
-		}
-		// fall back to AToB0 if specific intent not available
-		if _, ok := p.TagData[tagType]; !ok {
-			tagType = AToB0
-		}
-	} else {
-		switch t.intent {
-		case Perceptual:
-			tagType = BToA0
-		case RelativeColorimetric, AbsoluteColorimetric:
-			tagType = BToA1
-		case Saturation:
-			tagType = BToA2
-		}
-		// fall back to BToA0 if specific intent not available
-		if _, ok := p.TagData[tagType]; !ok {
-			tagType = BToA0
+	// preferred-first ordering: try the tag for the requested intent, then
+	// the perceptual tag (ICC default fallback), then the remaining one.
+	chain := lutFallbackChain(t.direction, t.intent)
+
+	var data []byte
+	for _, tagType := range chain {
+		if d, ok := p.TagData[tagType]; ok {
+			data = d
+			break
 		}
 	}
-
-	data, ok := p.TagData[tagType]
-	if !ok {
+	if data == nil {
 		return errors.New("icc: missing LUT tag")
 	}
 
@@ -271,6 +251,23 @@ func (t *Transform) initLut() error {
 
 	t.lut = lut
 	return nil
+}
+
+func lutFallbackChain(dir Direction, intent RenderingIntent) []TagType {
+	var b0, b1, b2 TagType
+	if dir == DeviceToPCS {
+		b0, b1, b2 = AToB0, AToB1, AToB2
+	} else {
+		b0, b1, b2 = BToA0, BToA1, BToA2
+	}
+	switch intent {
+	case RelativeColorimetric, AbsoluteColorimetric:
+		return []TagType{b1, b0, b2}
+	case Saturation:
+		return []TagType{b2, b0, b1}
+	default:
+		return []TagType{b0, b1, b2}
+	}
 }
 
 func (t *Transform) parseWhitePoint(data []byte) {
