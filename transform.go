@@ -298,75 +298,69 @@ func parseXYZ(data []byte) ([3]float64, error) {
 func (t *Transform) Apply(input []float64) []float64 {
 	switch t.profileType {
 	case profileTypeMatrixTRC:
-		return t.applyMatrixTRC(input)
+		if len(input) != 3 {
+			return make([]float64, 3)
+		}
+		x, y, z := t.applyMatrixTRC3(input[0], input[1], input[2])
+		return []float64{x, y, z}
 	case profileTypeGrayTRC:
-		return t.applyGrayTRC(input)
+		if t.direction == DeviceToPCS {
+			if len(input) != 1 {
+				return make([]float64, 3)
+			}
+			x, y, z := t.grayTRCToPCS(input[0])
+			return []float64{x, y, z}
+		}
+		// PCSToDevice: extract Y from D50-adapted XYZ
+		y := input[0]
+		if len(input) >= 2 {
+			y = input[1]
+		}
+		return []float64{t.grayTRCFromPCS(y)}
 	case profileTypeLut:
 		return t.applyLut(input)
 	}
 	return input
 }
 
-func (t *Transform) applyMatrixTRC(input []float64) []float64 {
-	if len(input) != 3 {
-		return make([]float64, 3)
-	}
-
+// applyMatrixTRC3 applies a 3-channel matrix-TRC transform to a colour
+// triple, returning the transformed triple by value to avoid per-call
+// allocation.  For DeviceToPCS the input is device colour in [0,1] and
+// the output is PCS XYZ; for PCSToDevice the input is PCS XYZ and the
+// output is device colour in [0,1].
+func (t *Transform) applyMatrixTRC3(a, b, c float64) (float64, float64, float64) {
 	if t.direction == DeviceToPCS {
-		// apply TRCs to linearise
-		r := t.trc[0].Evaluate(input[0])
-		g := t.trc[1].Evaluate(input[1])
-		b := t.trc[2].Evaluate(input[2])
-
-		// apply matrix to get XYZ
-		x := t.matrix[0]*r + t.matrix[1]*g + t.matrix[2]*b
-		y := t.matrix[3]*r + t.matrix[4]*g + t.matrix[5]*b
-		z := t.matrix[6]*r + t.matrix[7]*g + t.matrix[8]*b
-
-		return []float64{x, y, z}
+		// linearise via TRCs, then matrix to XYZ
+		r := t.trc[0].Evaluate(a)
+		g := t.trc[1].Evaluate(b)
+		bl := t.trc[2].Evaluate(c)
+		return t.matrix[0]*r + t.matrix[1]*g + t.matrix[2]*bl,
+			t.matrix[3]*r + t.matrix[4]*g + t.matrix[5]*bl,
+			t.matrix[6]*r + t.matrix[7]*g + t.matrix[8]*bl
 	}
 
-	// PCSToDevice
-	x, y, z := input[0], input[1], input[2]
-
-	// apply inverse matrix to get linear RGB
-	r := t.matrixInv[0]*x + t.matrixInv[1]*y + t.matrixInv[2]*z
-	g := t.matrixInv[3]*x + t.matrixInv[4]*y + t.matrixInv[5]*z
-	b := t.matrixInv[6]*x + t.matrixInv[7]*y + t.matrixInv[8]*z
-
-	// apply inverse TRCs
-	r = t.trcInv[0].Invert(clamp(r, 0, 1))
-	g = t.trcInv[1].Invert(clamp(g, 0, 1))
-	b = t.trcInv[2].Invert(clamp(b, 0, 1))
-
-	return []float64{clamp(r, 0, 1), clamp(g, 0, 1), clamp(b, 0, 1)}
+	// PCSToDevice: inverse matrix, then inverse TRCs
+	r := t.matrixInv[0]*a + t.matrixInv[1]*b + t.matrixInv[2]*c
+	g := t.matrixInv[3]*a + t.matrixInv[4]*b + t.matrixInv[5]*c
+	bl := t.matrixInv[6]*a + t.matrixInv[7]*b + t.matrixInv[8]*c
+	return clamp(t.trcInv[0].Invert(clamp(r, 0, 1)), 0, 1),
+		clamp(t.trcInv[1].Invert(clamp(g, 0, 1)), 0, 1),
+		clamp(t.trcInv[2].Invert(clamp(bl, 0, 1)), 0, 1)
 }
 
-func (t *Transform) applyGrayTRC(input []float64) []float64 {
-	if t.direction == DeviceToPCS {
-		if len(input) != 1 {
-			return make([]float64, 3)
-		}
-		// apply TRC to get linear luminance
-		y := t.grayTRC.Evaluate(input[0])
-		// PCS is always D50-adapted XYZ.  The profile's media white
-		// point may differ from D50 (non-conforming but common), so
-		// always scale by D50 here.  This is equivalent to scaling by
-		// the media white point and then applying Bradford adaptation
-		// to D50, because Bradford maps WP*y → D50*y (linearity).
-		return []float64{
-			d50WhitePoint[0] * y,
-			d50WhitePoint[1] * y,
-			d50WhitePoint[2] * y,
-		}
-	}
+// grayTRCToPCS maps a single grey channel to PCS XYZ via the gray TRC.
+// PCS is always D50-adapted XYZ; scaling by D50 covers profiles whose
+// media white point differs from D50 (non-conforming but common),
+// because Bradford adaptation is linear in y (WP*y → D50*y).
+func (t *Transform) grayTRCToPCS(in float64) (X, Y, Z float64) {
+	y := t.grayTRC.Evaluate(in)
+	return d50WhitePoint[0] * y, d50WhitePoint[1] * y, d50WhitePoint[2] * y
+}
 
-	// PCSToDevice: extract Y from D50-adapted XYZ and apply inverse TRC
-	y := input[0]
-	if len(input) >= 2 {
-		y = input[1] // use Y from XYZ
-	}
-	return []float64{t.grayTRCInv.Invert(clamp(y, 0, 1))}
+// grayTRCFromPCS maps PCS Y to a single grey channel via the inverse
+// gray TRC.
+func (t *Transform) grayTRCFromPCS(Y float64) float64 {
+	return t.grayTRCInv.Invert(clamp(Y, 0, 1))
 }
 
 func (t *Transform) applyLut(input []float64) []float64 {
@@ -383,17 +377,29 @@ func (t *Transform) ToXYZ(device []float64) (X, Y, Z float64) {
 		return 0, 0, 0
 	}
 
-	result := t.Apply(device)
+	switch t.profileType {
+	case profileTypeMatrixTRC:
+		// matrix-TRC profiles use XYZ PCS and never need a Lab decode.
+		if len(device) != 3 {
+			return 0, 0, 0
+		}
+		return t.applyMatrixTRC3(device[0], device[1], device[2])
 
-	// handle Lab to XYZ conversion if needed
+	case profileTypeGrayTRC:
+		if len(device) != 1 {
+			return 0, 0, 0
+		}
+		return t.grayTRCToPCS(device[0])
+	}
+
+	// LUT-based: fall back to allocating Apply path.
+	result := t.applyLut(device)
 	if t.profile.PCS == PCSLabSpace {
-		// LUT outputs are normalised [0,1]; convert to Lab ranges
-		if t.profileType == profileTypeLut && len(result) >= 3 {
+		if len(result) >= 3 {
 			result = denormaliseLab(result)
 		}
 		return labToXYZ(result, t.whitePoint)
 	}
-
 	if len(result) >= 3 {
 		return result[0], result[1], result[2]
 	}
@@ -432,17 +438,10 @@ func (t *Transform) FromXYZInto(X, Y, Z float64, dst []float64) {
 
 	switch t.profileType {
 	case profileTypeMatrixTRC:
-		// XYZ -> inverse matrix -> inverse TRC
-		r := t.matrixInv[0]*X + t.matrixInv[1]*Y + t.matrixInv[2]*Z
-		g := t.matrixInv[3]*X + t.matrixInv[4]*Y + t.matrixInv[5]*Z
-		b := t.matrixInv[6]*X + t.matrixInv[7]*Y + t.matrixInv[8]*Z
-		dst[0] = clamp(t.trcInv[0].Invert(clamp(r, 0, 1)), 0, 1)
-		dst[1] = clamp(t.trcInv[1].Invert(clamp(g, 0, 1)), 0, 1)
-		dst[2] = clamp(t.trcInv[2].Invert(clamp(b, 0, 1)), 0, 1)
+		dst[0], dst[1], dst[2] = t.applyMatrixTRC3(X, Y, Z)
 
 	case profileTypeGrayTRC:
-		// PCS Y is D50-adapted; d50WhitePoint[1] is 1.0
-		dst[0] = t.grayTRCInv.Invert(clamp(Y, 0, 1))
+		dst[0] = t.grayTRCFromPCS(Y)
 
 	default:
 		// LUT-based: fall back to allocating path
