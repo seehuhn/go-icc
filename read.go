@@ -20,14 +20,15 @@ import (
 	"bytes"
 	"crypto/md5"
 	"fmt"
+	"slices"
 	"time"
 )
 
 // Decode reads an ICC profile from binary data.
 //
-// The function takes ownership of the data slice; the caller should not
-// modify it after calling Decode. If the profile contains a checksum,
-// it is verified and the result is stored in the CheckSum field.
+// Decode does not modify or retain the input slice; callers may reuse or
+// mutate it freely after the call returns. If the profile contains a
+// checksum, it is verified and the result is stored in the CheckSum field.
 //
 // Returns an [InvalidProfileError] if the data is malformed.
 func Decode(data []byte) (*Profile, error) {
@@ -37,6 +38,11 @@ func Decode(data []byte) (*Profile, error) {
 	if string(data[36:40]) != "acsp" {
 		return nil, invalidProfile(36, "missing 'acsp' signature")
 	}
+
+	// Decode mutates bytes 44, 64 and 84-99 while verifying the checksum,
+	// and aliases the buffer into p.TagData.  Work on a private copy so
+	// the caller's slice is neither mutated nor retained.
+	data = slices.Clone(data)
 
 	numTags := getUint32(data, 128)
 	maxNumTags := uint((len(data) - 128 - 4) / 12)

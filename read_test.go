@@ -17,6 +17,9 @@
 package icc
 
 import (
+	"bytes"
+	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -130,6 +133,56 @@ func TestRoundTrip(t *testing.T) {
 			testRoundTrip(t, tc.Profile)
 		})
 	}
+}
+
+// TestDecodeDoesNotMutateInput verifies that Decode does not modify its
+// input slice.  The package ships embedded ICC profiles that are
+// package-level []byte variables; if Decode mutated them, a single call
+// would corrupt the shared bytes for every subsequent caller.
+func TestDecodeDoesNotMutateInput(t *testing.T) {
+	profiles := []struct {
+		name string
+		data []byte
+	}{
+		{"sRGB-v2", SRGBv2Profile},
+		{"sRGB-v4", SRGBv4Profile},
+		{"CMYK", CMYKProfile},
+	}
+	for _, p := range profiles {
+		t.Run(p.name, func(t *testing.T) {
+			before := slices.Clone(p.data)
+			if _, err := Decode(p.data); err != nil {
+				t.Fatalf("decode failed: %v", err)
+			}
+			if !bytes.Equal(before, p.data) {
+				t.Errorf("Decode mutated its input slice")
+			}
+		})
+	}
+}
+
+// TestDecodeConcurrent verifies that concurrent calls to Decode on the
+// same input slice are safe.  Run with -race to catch regressions.
+func TestDecodeConcurrent(t *testing.T) {
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range 50 {
+				p, err := Decode(SRGBv2Profile)
+				if err != nil {
+					t.Errorf("decode failed: %v", err)
+					return
+				}
+				if p.CheckSum != CheckSumValid {
+					t.Errorf("got CheckSum %v, want Valid", p.CheckSum)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
 }
 
 func FuzzRoundTrip(f *testing.F) {
