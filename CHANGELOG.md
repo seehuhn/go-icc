@@ -7,11 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Matrix-TRC and gray-TRC transforms no longer allocate per pixel,
+  reducing total bytes allocated by 25–42 % on tile-rendering workloads.
+
 ### Fixed
 - `Decode` no longer mutates or retains its input slice.  Previously the
   caller had to surrender ownership of the buffer, which silently corrupted
   shared inputs such as the embedded `SRGBv2Profile`, `SRGBv4Profile`, and
   `CMYKProfile` byte slices on every call.
+- LUT profiles that omit `AToB0` (or `BToA0`) but include `AToB1`/`AToB2`
+  are no longer rejected with "missing LUT tag"; the requested intent's
+  tag is tried first, then the remaining intent tags in preferred order.
 
 ## [0.7.1] (2026-03-31)
 
