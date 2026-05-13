@@ -16,7 +16,11 @@
 
 package icc
 
-import "fmt"
+import (
+	"fmt"
+
+	"seehuhn.de/go/icc/internal/budget"
+)
 
 // The TagType identifies a tag in an ICC profile.
 type TagType uint32
@@ -109,7 +113,7 @@ func (p *Profile) Copyright() (MultiLocalizedUnicode, error) {
 	if !ok {
 		return nil, errMissingTag
 	}
-	val, err := decodeMLUC(tag)
+	val, err := decodeMLUC(budget.New(int64(len(tag))), tag)
 	if err != errUnexpectedType {
 		return val, err
 	}

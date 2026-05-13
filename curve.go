@@ -19,6 +19,8 @@ package icc
 import (
 	"math"
 	"sort"
+
+	"seehuhn.de/go/icc/internal/budget"
 )
 
 // Curve represents a 1D transfer function (TRC) used in ICC profiles.
@@ -61,6 +63,10 @@ type Curve struct {
 // DecodeCurve decodes a curve from ICC tag data.
 // The data must be a curveType or parametricCurveType element.
 func DecodeCurve(data []byte) (*Curve, error) {
+	return decodeCurve(budget.New(int64(len(data))), data)
+}
+
+func decodeCurve(b *budget.Budget, data []byte) (*Curve, error) {
 	if len(data) < 8 {
 		return nil, errInvalidTagData
 	}
@@ -68,15 +74,15 @@ func DecodeCurve(data []byte) (*Curve, error) {
 	typeID := string(data[0:4])
 	switch typeID {
 	case "curv":
-		return decodeCurveType(data)
+		return decodeCurveType(b, data)
 	case "para":
-		return decodeParametricCurve(data)
+		return decodeParametricCurve(b, data)
 	default:
 		return nil, errUnexpectedType
 	}
 }
 
-func decodeCurveType(data []byte) (*Curve, error) {
+func decodeCurveType(b *budget.Budget, data []byte) (*Curve, error) {
 	if len(data) < 12 {
 		return nil, errInvalidTagData
 	}
@@ -99,14 +105,17 @@ func decodeCurveType(data []byte) (*Curve, error) {
 	if uint64(len(data)) < 12+2*uint64(n) {
 		return nil, errInvalidTagData
 	}
-	table := make([]uint16, n)
+	table, err := budget.AllocSlice[uint16](b, int(n))
+	if err != nil {
+		return nil, err
+	}
 	for i := range table {
 		table[i] = getUint16(data, 12+i*2)
 	}
 	return &Curve{Table: table}, nil
 }
 
-func decodeParametricCurve(data []byte) (*Curve, error) {
+func decodeParametricCurve(b *budget.Budget, data []byte) (*Curve, error) {
 	if len(data) < 12 {
 		return nil, errInvalidTagData
 	}
@@ -134,7 +143,10 @@ func decodeParametricCurve(data []byte) (*Curve, error) {
 		return nil, errInvalidTagData
 	}
 
-	params := make([]float64, numParams)
+	params, err := budget.AllocSlice[float64](b, numParams)
+	if err != nil {
+		return nil, err
+	}
 	for i := range params {
 		params[i] = getS15Fixed16(data, 12+i*4)
 	}

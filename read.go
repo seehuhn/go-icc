@@ -22,6 +22,8 @@ import (
 	"fmt"
 	"slices"
 	"time"
+
+	"seehuhn.de/go/icc/internal/budget"
 )
 
 // Decode reads an ICC profile from binary data.
@@ -43,6 +45,8 @@ func Decode(data []byte) (*Profile, error) {
 	// and aliases the buffer into p.TagData.  Work on a private copy so
 	// the caller's slice is neither mutated nor retained.
 	data = slices.Clone(data)
+
+	b := budget.New(int64(len(data)))
 
 	numTags := getUint32(data, 128)
 	maxNumTags := uint((len(data) - 128 - 4) / 12)
@@ -109,6 +113,15 @@ func Decode(data []byte) (*Profile, error) {
 		end := start + int64(tagSize)
 		if start < minTagOffset || end > int64(len(data)) {
 			return nil, invalidProfile(offset, "tag is out of bounds")
+		}
+		// charge per-entry overhead for the tag map; the value bytes
+		// alias the cloned input, so no extra payload to track.
+		// Duplicate tag entries reuse the existing map slot, so we
+		// only charge for first-seen tagTypes.
+		if _, exists := p.TagData[tagType]; !exists {
+			if err := b.Charge(budget.MapEntryOverhead); err != nil {
+				return nil, invalidProfile(offset, "too many tags")
+			}
 		}
 		p.TagData[tagType] = data[start:end]
 	}

@@ -19,6 +19,8 @@ package icc
 import (
 	"errors"
 	"unicode/utf16"
+
+	"seehuhn.de/go/icc/internal/budget"
 )
 
 func decodeText(data []byte) (string, error) {
@@ -48,7 +50,7 @@ type LocalizedUnicode struct {
 	Value    string
 }
 
-func decodeMLUC(data []byte) (MultiLocalizedUnicode, error) {
+func decodeMLUC(b *budget.Budget, data []byte) (MultiLocalizedUnicode, error) {
 	err := checkType("mluc", data)
 	if err != nil {
 		return nil, err
@@ -62,7 +64,10 @@ func decodeMLUC(data []byte) (MultiLocalizedUnicode, error) {
 	if n == 0 || uint64(len(data)) < 16+12*uint64(n) {
 		return nil, errInvalidTagData
 	}
-	res := make(MultiLocalizedUnicode, n)
+	res, err := budget.AllocSlice[LocalizedUnicode](b, int(n))
+	if err != nil {
+		return nil, err
+	}
 	for i := range res {
 		language := string(data[16+12*i : 16+12*i+2])
 		country := string(data[16+12*i+2 : 16+12*i+4])
@@ -75,7 +80,10 @@ func decodeMLUC(data []byte) (MultiLocalizedUnicode, error) {
 			return nil, errInvalidTagData
 		}
 
-		d16 := make([]uint16, length/2)
+		d16, err := budget.AllocSlice[uint16](b, int(length/2))
+		if err != nil {
+			return nil, err
+		}
 		for j := range d16 {
 			d16[j] = uint16(data[start+2*uint64(j)])<<8 | uint16(data[start+2*uint64(j)+1])
 		}
@@ -85,7 +93,7 @@ func decodeMLUC(data []byte) (MultiLocalizedUnicode, error) {
 			Value:    string(utf16.Decode(d16)),
 		}
 	}
-	return res, nil
+	return MultiLocalizedUnicode(res), nil
 }
 
 func checkType(typeID string, data []byte) error {
