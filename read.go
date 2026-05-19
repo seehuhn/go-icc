@@ -23,7 +23,7 @@ import (
 	"slices"
 	"time"
 
-	"seehuhn.de/go/icc/internal/budget"
+	"seehuhn.de/go/membudget"
 )
 
 // Decode reads an ICC profile from binary data.
@@ -46,7 +46,7 @@ func Decode(data []byte) (*Profile, error) {
 	// the caller's slice is neither mutated nor retained.
 	data = slices.Clone(data)
 
-	b := budget.New(int64(len(data)))
+	b := newBudget(int64(len(data)))
 
 	numTags := getUint32(data, 128)
 	maxNumTags := uint((len(data) - 128 - 4) / 12)
@@ -119,7 +119,7 @@ func Decode(data []byte) (*Profile, error) {
 		// Duplicate tag entries reuse the existing map slot, so we
 		// only charge for first-seen tagTypes.
 		if _, exists := p.TagData[tagType]; !exists {
-			if err := b.Charge(budget.MapEntryOverhead); err != nil {
+			if err := b.Charge(membudget.MapEntryOverhead); err != nil {
 				return nil, invalidProfile(offset, "too many tags")
 			}
 		}

@@ -20,7 +20,7 @@ import (
 	"errors"
 	"unicode/utf16"
 
-	"seehuhn.de/go/icc/internal/budget"
+	"seehuhn.de/go/membudget"
 )
 
 func decodeText(data []byte) (string, error) {
@@ -50,7 +50,7 @@ type LocalizedUnicode struct {
 	Value    string
 }
 
-func decodeMLUC(b *budget.Budget, data []byte) (MultiLocalizedUnicode, error) {
+func decodeMLUC(b *membudget.Budget, data []byte) (MultiLocalizedUnicode, error) {
 	err := checkType("mluc", data)
 	if err != nil {
 		return nil, err
@@ -64,7 +64,7 @@ func decodeMLUC(b *budget.Budget, data []byte) (MultiLocalizedUnicode, error) {
 	if n == 0 || uint64(len(data)) < 16+12*uint64(n) {
 		return nil, errInvalidTagData
 	}
-	res, err := budget.AllocSlice[LocalizedUnicode](b, int(n))
+	res, err := membudget.AllocSlice[LocalizedUnicode](b, int(n))
 	if err != nil {
 		return nil, err
 	}
@@ -80,7 +80,7 @@ func decodeMLUC(b *budget.Budget, data []byte) (MultiLocalizedUnicode, error) {
 			return nil, errInvalidTagData
 		}
 
-		d16, err := budget.AllocSlice[uint16](b, int(length/2))
+		d16, err := membudget.AllocSlice[uint16](b, int(length/2))
 		if err != nil {
 			return nil, err
 		}

@@ -166,9 +166,7 @@ func TestDecodeDoesNotMutateInput(t *testing.T) {
 func TestDecodeConcurrent(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 4 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for range 50 {
 				p, err := Decode(SRGBv2Profile)
 				if err != nil {
@@ -180,7 +178,7 @@ func TestDecodeConcurrent(t *testing.T) {
 					return
 				}
 			}
-		}()
+		})
 	}
 	wg.Wait()
 }

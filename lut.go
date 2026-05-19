@@ -19,7 +19,7 @@ package icc
 import (
 	"math"
 
-	"seehuhn.de/go/icc/internal/budget"
+	"seehuhn.de/go/membudget"
 )
 
 // Lut represents a colour lookup table from an ICC profile.
@@ -47,7 +47,7 @@ func DecodeLut(data []byte) (Lut, error) {
 		return nil, errInvalidTagData
 	}
 
-	b := budget.New(int64(len(data)))
+	b := newBudget(int64(len(data)))
 	typeID := string(data[0:4])
 	switch typeID {
 	case "mft1":
@@ -189,7 +189,7 @@ func (l *Lut8) Encode() ([]byte, error) {
 	return buf, nil
 }
 
-func decodeLut8(b *budget.Budget, data []byte) (*Lut8, error) {
+func decodeLut8(b *membudget.Budget, data []byte) (*Lut8, error) {
 	if len(data) < 48 {
 		return nil, errInvalidTagData
 	}
@@ -203,7 +203,7 @@ func decodeLut8(b *budget.Budget, data []byte) (*Lut8, error) {
 	}
 
 	// matrix at offset 12
-	matrix, err := budget.AllocSlice[float64](b, 9)
+	matrix, err := membudget.AllocSlice[float64](b, 9)
 	if err != nil {
 		return nil, err
 	}
@@ -221,12 +221,12 @@ func decodeLut8(b *budget.Budget, data []byte) (*Lut8, error) {
 		return nil, errInvalidTagData
 	}
 
-	inputCurves, err := budget.AllocSlice[*Curve](b, inputChannels)
+	inputCurves, err := membudget.AllocSlice[*Curve](b, inputChannels)
 	if err != nil {
 		return nil, err
 	}
 	for ch := range inputChannels {
-		table, err := budget.AllocSlice[uint16](b, 256)
+		table, err := membudget.AllocSlice[uint16](b, 256)
 		if err != nil {
 			return nil, err
 		}
@@ -249,7 +249,7 @@ func decodeLut8(b *budget.Budget, data []byte) (*Lut8, error) {
 		return nil, errInvalidTagData
 	}
 
-	clut, err := budget.AllocSlice[float64](b, clutSize)
+	clut, err := membudget.AllocSlice[float64](b, clutSize)
 	if err != nil {
 		return nil, err
 	}
@@ -264,12 +264,12 @@ func decodeLut8(b *budget.Budget, data []byte) (*Lut8, error) {
 		return nil, errInvalidTagData
 	}
 
-	outputCurves, err := budget.AllocSlice[*Curve](b, outputChannels)
+	outputCurves, err := membudget.AllocSlice[*Curve](b, outputChannels)
 	if err != nil {
 		return nil, err
 	}
 	for ch := range outputChannels {
-		table, err := budget.AllocSlice[uint16](b, 256)
+		table, err := membudget.AllocSlice[uint16](b, 256)
 		if err != nil {
 			return nil, err
 		}
@@ -431,7 +431,7 @@ func (l *Lut16) Encode() ([]byte, error) {
 	return buf, nil
 }
 
-func decodeLut16(b *budget.Budget, data []byte) (*Lut16, error) {
+func decodeLut16(b *membudget.Budget, data []byte) (*Lut16, error) {
 	if len(data) < 52 {
 		return nil, errInvalidTagData
 	}
@@ -445,7 +445,7 @@ func decodeLut16(b *budget.Budget, data []byte) (*Lut16, error) {
 	}
 
 	// matrix at offset 12
-	matrix, err := budget.AllocSlice[float64](b, 9)
+	matrix, err := membudget.AllocSlice[float64](b, 9)
 	if err != nil {
 		return nil, err
 	}
@@ -466,12 +466,12 @@ func decodeLut16(b *budget.Budget, data []byte) (*Lut16, error) {
 		return nil, errInvalidTagData
 	}
 
-	inputCurves, err := budget.AllocSlice[*Curve](b, inputChannels)
+	inputCurves, err := membudget.AllocSlice[*Curve](b, inputChannels)
 	if err != nil {
 		return nil, err
 	}
 	for ch := range inputChannels {
-		table, err := budget.AllocSlice[uint16](b, inputTableEntries)
+		table, err := membudget.AllocSlice[uint16](b, inputTableEntries)
 		if err != nil {
 			return nil, err
 		}
@@ -492,7 +492,7 @@ func decodeLut16(b *budget.Budget, data []byte) (*Lut16, error) {
 		return nil, errInvalidTagData
 	}
 
-	clut, err := budget.AllocSlice[float64](b, clutSize)
+	clut, err := membudget.AllocSlice[float64](b, clutSize)
 	if err != nil {
 		return nil, err
 	}
@@ -507,12 +507,12 @@ func decodeLut16(b *budget.Budget, data []byte) (*Lut16, error) {
 		return nil, errInvalidTagData
 	}
 
-	outputCurves, err := budget.AllocSlice[*Curve](b, outputChannels)
+	outputCurves, err := membudget.AllocSlice[*Curve](b, outputChannels)
 	if err != nil {
 		return nil, err
 	}
 	for ch := range outputChannels {
-		table, err := budget.AllocSlice[uint16](b, outputTableEntries)
+		table, err := membudget.AllocSlice[uint16](b, outputTableEntries)
 		if err != nil {
 			return nil, err
 		}
@@ -604,7 +604,7 @@ func (l *LutAToB) Encode() ([]byte, error) {
 	return encodeLutAB(l.inputChannels, l.outputChannels, l.aCurves, l.gridPoints, l.clut, l.clutPrecision, l.mCurves, l.matrix, l.bCurves, false)
 }
 
-func decodeLutAToB(b *budget.Budget, data []byte) (*LutAToB, error) {
+func decodeLutAToB(b *membudget.Budget, data []byte) (*LutAToB, error) {
 	if len(data) < 32 {
 		return nil, errInvalidTagData
 	}
@@ -748,7 +748,7 @@ func (l *LutBToA) Encode() ([]byte, error) {
 	return encodeLutAB(l.inputChannels, l.outputChannels, l.aCurves, l.gridPoints, l.clut, l.clutPrecision, l.mCurves, l.matrix, l.bCurves, true)
 }
 
-func decodeLutBToA(b *budget.Budget, data []byte) (*LutBToA, error) {
+func decodeLutBToA(b *membudget.Budget, data []byte) (*LutBToA, error) {
 	if len(data) < 32 {
 		return nil, errInvalidTagData
 	}
@@ -923,8 +923,8 @@ func applyMatrix3x4(m []float64, values []float64) []float64 {
 	}
 }
 
-func decodeCurvesAtOffset(b *budget.Budget, data []byte, offset int, numCurves int) ([]*Curve, error) {
-	curves, err := budget.AllocSlice[*Curve](b, numCurves)
+func decodeCurvesAtOffset(b *membudget.Budget, data []byte, offset int, numCurves int) ([]*Curve, error) {
+	curves, err := membudget.AllocSlice[*Curve](b, numCurves)
 	if err != nil {
 		return nil, err
 	}
@@ -970,11 +970,11 @@ func decodeCurvesAtOffset(b *budget.Budget, data []byte, offset int, numCurves i
 	return curves, nil
 }
 
-func decodeMatrix3x4(b *budget.Budget, data []byte, offset int) ([]float64, error) {
+func decodeMatrix3x4(b *membudget.Budget, data []byte, offset int) ([]float64, error) {
 	if offset+48 > len(data) {
 		return nil, errInvalidTagData
 	}
-	matrix, err := budget.AllocSlice[float64](b, 12)
+	matrix, err := membudget.AllocSlice[float64](b, 12)
 	if err != nil {
 		return nil, err
 	}
@@ -987,12 +987,12 @@ func decodeMatrix3x4(b *budget.Budget, data []byte, offset int) ([]float64, erro
 	return matrix, nil
 }
 
-func decodeCLUT(b *budget.Budget, data []byte, offset int, inputChannels, outputChannels int) ([]int, []float64, int, error) {
+func decodeCLUT(b *membudget.Budget, data []byte, offset int, inputChannels, outputChannels int) ([]int, []float64, int, error) {
 	if offset+20 > len(data) {
 		return nil, nil, 0, errInvalidTagData
 	}
 
-	gridPoints, err := budget.AllocSlice[int](b, inputChannels)
+	gridPoints, err := membudget.AllocSlice[int](b, inputChannels)
 	if err != nil {
 		return nil, nil, 0, err
 	}
@@ -1017,7 +1017,7 @@ func decodeCLUT(b *budget.Budget, data []byte, offset int, inputChannels, output
 		if len(data) < clutDataStart+size {
 			return nil, nil, 0, errInvalidTagData
 		}
-		clut, err = budget.AllocSlice[float64](b, size)
+		clut, err = membudget.AllocSlice[float64](b, size)
 		if err != nil {
 			return nil, nil, 0, err
 		}
@@ -1028,7 +1028,7 @@ func decodeCLUT(b *budget.Budget, data []byte, offset int, inputChannels, output
 		if len(data) < clutDataStart+size*2 {
 			return nil, nil, 0, errInvalidTagData
 		}
-		clut, err = budget.AllocSlice[float64](b, size)
+		clut, err = membudget.AllocSlice[float64](b, size)
 		if err != nil {
 			return nil, nil, 0, err
 		}

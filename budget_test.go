@@ -20,7 +20,7 @@ import (
 	"errors"
 	"testing"
 
-	"seehuhn.de/go/icc/internal/budget"
+	"seehuhn.de/go/membudget"
 )
 
 // makeMft1 builds a minimal but valid mft1 tag with the given channel
@@ -111,17 +111,17 @@ func makeMLUC(n int) []byte {
 
 func wantBudgetExceeded(t *testing.T, err error) {
 	t.Helper()
-	if !errors.Is(err, budget.ErrBudgetExceeded) {
-		t.Fatalf("err = %v, want ErrBudgetExceeded", err)
+	if !errors.Is(err, membudget.ErrExceeded) {
+		t.Fatalf("err = %v, want membudget.ErrExceeded", err)
 	}
 }
 
 func TestBudgetMft1CLUTBomb(t *testing.T) {
 	// 3 input channels, 15 output channels, gridPoints=21 →
 	// 21^3 × 15 = 138,915 float64 entries = 1,111,320 bytes.
-	// budget.New(0) = 1 MiB → CLUT alloc exceeds the budget.
+	// newBudget(0) = 1 MiB → CLUT alloc exceeds the budget.
 	data := makeMft1(3, 15, 21)
-	_, err := decodeLut8(budget.New(0), data)
+	_, err := decodeLut8(newBudget(0), data)
 	wantBudgetExceeded(t, err)
 }
 
@@ -129,7 +129,7 @@ func TestBudgetMft1Fits(t *testing.T) {
 	// modest gridPoints leaves plenty of headroom in the 1 MiB base
 	// budget.
 	data := makeMft1(3, 1, 10)
-	if _, err := decodeLut8(budget.New(0), data); err != nil {
+	if _, err := decodeLut8(newBudget(0), data); err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
 }
@@ -138,13 +138,13 @@ func TestBudgetMft2CLUTBomb(t *testing.T) {
 	// 3 input channels, 15 output channels, gridPoints=21 →
 	// CLUT entries 138,915 × 8 bytes = 1.06 MiB exceeds 1 MiB base.
 	data := makeMft2(3, 15, 21, 2, 2)
-	_, err := decodeLut16(budget.New(0), data)
+	_, err := decodeLut16(newBudget(0), data)
 	wantBudgetExceeded(t, err)
 }
 
 func TestBudgetMft2Fits(t *testing.T) {
 	data := makeMft2(3, 1, 10, 2, 2)
-	if _, err := decodeLut16(budget.New(0), data); err != nil {
+	if _, err := decodeLut16(newBudget(0), data); err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
 }
@@ -153,13 +153,13 @@ func TestBudgetMABCLUTBomb(t *testing.T) {
 	// 3 input channels, 15 output channels, gridPoints=21 →
 	// CLUT entries 138,915 × 8 bytes = 1.06 MiB exceeds 1 MiB base.
 	data := makeMABCLUT(3, 15, 21)
-	_, _, _, err := decodeCLUT(budget.New(0), data, 0, 3, 15)
+	_, _, _, err := decodeCLUT(newBudget(0), data, 0, 3, 15)
 	wantBudgetExceeded(t, err)
 }
 
 func TestBudgetMABCLUTFits(t *testing.T) {
 	data := makeMABCLUT(3, 1, 10)
-	if _, _, _, err := decodeCLUT(budget.New(0), data, 0, 3, 1); err != nil {
+	if _, _, _, err := decodeCLUT(newBudget(0), data, 0, 3, 1); err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
 }
@@ -168,13 +168,13 @@ func TestBudgetCurvBomb(t *testing.T) {
 	// curveType with 600_000 sampled entries → 1.2 MiB uint16 table.
 	const n = 600_000
 	data := makeCurv(n)
-	_, err := decodeCurve(budget.New(0), data)
+	_, err := decodeCurve(newBudget(0), data)
 	wantBudgetExceeded(t, err)
 }
 
 func TestBudgetCurvFits(t *testing.T) {
 	data := makeCurv(100)
-	if _, err := decodeCurve(budget.New(0), data); err != nil {
+	if _, err := decodeCurve(newBudget(0), data); err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
 }
@@ -184,13 +184,13 @@ func TestBudgetMLUCAliasingBomb(t *testing.T) {
 	// = 2.88 MiB exceeds the 1 MiB base budget.
 	const n = 60_000
 	data := makeMLUC(n)
-	_, err := decodeMLUC(budget.New(0), data)
+	_, err := decodeMLUC(newBudget(0), data)
 	wantBudgetExceeded(t, err)
 }
 
 func TestBudgetMLUCFits(t *testing.T) {
 	data := makeMLUC(2)
-	if _, err := decodeMLUC(budget.New(0), data); err != nil {
+	if _, err := decodeMLUC(newBudget(0), data); err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
 }

@@ -20,7 +20,7 @@ import (
 	"math"
 	"sort"
 
-	"seehuhn.de/go/icc/internal/budget"
+	"seehuhn.de/go/membudget"
 )
 
 // Curve represents a 1D transfer function (TRC) used in ICC profiles.
@@ -63,10 +63,10 @@ type Curve struct {
 // DecodeCurve decodes a curve from ICC tag data.
 // The data must be a curveType or parametricCurveType element.
 func DecodeCurve(data []byte) (*Curve, error) {
-	return decodeCurve(budget.New(int64(len(data))), data)
+	return decodeCurve(newBudget(int64(len(data))), data)
 }
 
-func decodeCurve(b *budget.Budget, data []byte) (*Curve, error) {
+func decodeCurve(b *membudget.Budget, data []byte) (*Curve, error) {
 	if len(data) < 8 {
 		return nil, errInvalidTagData
 	}
@@ -82,7 +82,7 @@ func decodeCurve(b *budget.Budget, data []byte) (*Curve, error) {
 	}
 }
 
-func decodeCurveType(b *budget.Budget, data []byte) (*Curve, error) {
+func decodeCurveType(b *membudget.Budget, data []byte) (*Curve, error) {
 	if len(data) < 12 {
 		return nil, errInvalidTagData
 	}
@@ -105,7 +105,7 @@ func decodeCurveType(b *budget.Budget, data []byte) (*Curve, error) {
 	if uint64(len(data)) < 12+2*uint64(n) {
 		return nil, errInvalidTagData
 	}
-	table, err := budget.AllocSlice[uint16](b, int(n))
+	table, err := membudget.AllocSlice[uint16](b, int(n))
 	if err != nil {
 		return nil, err
 	}
@@ -115,7 +115,7 @@ func decodeCurveType(b *budget.Budget, data []byte) (*Curve, error) {
 	return &Curve{Table: table}, nil
 }
 
-func decodeParametricCurve(b *budget.Budget, data []byte) (*Curve, error) {
+func decodeParametricCurve(b *membudget.Budget, data []byte) (*Curve, error) {
 	if len(data) < 12 {
 		return nil, errInvalidTagData
 	}
@@ -143,7 +143,7 @@ func decodeParametricCurve(b *budget.Budget, data []byte) (*Curve, error) {
 		return nil, errInvalidTagData
 	}
 
-	params, err := budget.AllocSlice[float64](b, numParams)
+	params, err := membudget.AllocSlice[float64](b, numParams)
 	if err != nil {
 		return nil, err
 	}
