@@ -41,7 +41,7 @@
 //	if err != nil {
 //	    // handle error
 //	}
-//	X, Y, Z := t.ToXYZ([]float64{r, g, b})  // device RGB to PCS XYZ
+//	X, Y, Z := t.ToXYZ([]float64{r, g, b}, nil)  // device RGB to PCS XYZ
 //
 // For the reverse direction:
 //

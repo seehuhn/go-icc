@@ -38,8 +38,9 @@ const (
 // profiles (common for displays), grayscale profiles, and LUT-based profiles
 // (common for printers).
 //
-// A Transform is not safe for concurrent use. If the same Transform needs to be
-// used from multiple goroutines, callers must provide their own synchronisation.
+// A Transform is read-only once created: [Transform.ToXYZ], [Transform.FromXYZ],
+// [Transform.Apply], and [Transform.FromXYZInto] may be called concurrently from
+// multiple goroutines, provided each goroutine uses its own [Workspace] (or nil).
 type Transform struct {
 	profile   *Profile
 	direction Direction
@@ -209,6 +210,14 @@ func (t *Transform) initMatrixTRC() error {
 	t.trc = [3]*Curve{rTRC, gTRC, bTRC}
 	t.trcInv = [3]*Curve{rTRC, gTRC, bTRC} // same curves used for inversion
 
+	// pre-build the inverse tables so that a Transform shared across goroutines
+	// can run FromXYZ/FromXYZInto concurrently without lazily mutating Curve state
+	if t.direction == PCSToDevice {
+		for _, c := range t.trcInv {
+			c.prepareInverse()
+		}
+	}
+
 	return nil
 }
 
@@ -222,6 +231,12 @@ func (t *Transform) initGrayTRC() error {
 
 	t.grayTRC = grayTRC
 	t.grayTRCInv = grayTRC
+
+	// pre-build the inverse table so that a Transform shared across goroutines
+	// can run FromXYZ/FromXYZInto concurrently without lazily mutating Curve state
+	if t.direction == PCSToDevice {
+		t.grayTRCInv.prepareInverse()
+	}
 
 	return nil
 }
@@ -372,7 +387,11 @@ func (t *Transform) applyLut(input []float64) []float64 {
 
 // ToXYZ converts device colour to PCS XYZ (D50).
 // Input is a normalised [0,1] slice with the device colour values.
-func (t *Transform) ToXYZ(device []float64) (X, Y, Z float64) {
+//
+// The optional ws supplies reusable scratch buffers; pass a non-nil [Workspace]
+// to avoid per-call allocation in a hot loop, or nil to allocate internally.
+// The same Workspace must not be used from more than one goroutine at a time.
+func (t *Transform) ToXYZ(device []float64, ws *Workspace) (X, Y, Z float64) {
 	if t.direction != DeviceToPCS {
 		return 0, 0, 0
 	}
@@ -392,11 +411,19 @@ func (t *Transform) ToXYZ(device []float64) (X, Y, Z float64) {
 		return t.grayTRCToPCS(device[0])
 	}
 
-	// LUT-based: fall back to allocating Apply path.
-	result := t.applyLut(device)
+	// LUT-based
+	var result []float64
+	if t.lut != nil {
+		result = ws.result(t.lut.OutputChannels())
+		t.lut.ApplyInto(device, result, ws)
+	} else {
+		// degenerate: treat device as PCS, mirroring applyLut returning input
+		result = ws.result(len(device))
+		copy(result, device)
+	}
 	if t.profile.PCS == PCSLabSpace {
 		if len(result) >= 3 {
-			result = denormaliseLab(result)
+			denormaliseLabInPlace(result)
 		}
 		return labToXYZ(result, t.whitePoint)
 	}
@@ -412,26 +439,20 @@ func (t *Transform) FromXYZ(X, Y, Z float64) []float64 {
 	if t.direction != PCSToDevice {
 		return nil
 	}
-
-	var input []float64
-	if t.profile.PCS == PCSLabSpace {
-		L, a, b := xyzToLab(X, Y, Z, t.whitePoint)
-		input = []float64{L, a, b}
-		// LUT inputs are normalised [0,1]; convert from Lab ranges
-		if t.profileType == profileTypeLut {
-			input = normaliseLab(input)
-		}
-	} else {
-		input = []float64{X, Y, Z}
-	}
-
-	return t.Apply(input)
+	dst := make([]float64, t.Channels())
+	t.FromXYZInto(X, Y, Z, dst, nil)
+	return dst
 }
 
 // FromXYZInto converts PCS XYZ (D50) to device colour, writing into dst.
 // The dst slice must have length >= Channels().
 // This avoids allocations in per-pixel loops.
-func (t *Transform) FromXYZInto(X, Y, Z float64, dst []float64) {
+//
+// The optional ws supplies reusable scratch buffers for the LUT-based path;
+// pass a non-nil [Workspace] to avoid per-call allocation in a hot loop, or nil
+// to allocate internally. The same Workspace must not be used from more than
+// one goroutine at a time.
+func (t *Transform) FromXYZInto(X, Y, Z float64, dst []float64, ws *Workspace) {
 	if t.direction != PCSToDevice {
 		return
 	}
@@ -444,9 +465,22 @@ func (t *Transform) FromXYZInto(X, Y, Z float64, dst []float64) {
 		dst[0] = t.grayTRCFromPCS(Y)
 
 	default:
-		// LUT-based: fall back to allocating path
-		result := t.FromXYZ(X, Y, Z)
-		copy(dst, result)
+		// LUT-based
+		in := ws.result(3)
+		if t.profile.PCS == PCSLabSpace {
+			in[0], in[1], in[2] = xyzToLab(X, Y, Z, t.whitePoint)
+			if t.profileType == profileTypeLut {
+				normaliseLabInPlace(in)
+			}
+		} else {
+			in[0], in[1], in[2] = X, Y, Z
+		}
+		if t.lut == nil {
+			// mirror Apply returning input unchanged
+			copy(dst, in[:3])
+			return
+		}
+		t.lut.ApplyInto(in, dst, ws)
 	}
 }
 
@@ -545,32 +579,27 @@ func xyzToLab(X, Y, Z float64, white [3]float64) (L, a, b float64) {
 	return L, a, b
 }
 
-// normaliseLab converts Lab values to normalised [0,1] encoding for LUT processing.
-// Input: L in [0, 100], a and b in [-128, 127].
-// Output: normalised values in [0, 1].
-func normaliseLab(lab []float64) []float64 {
+// normaliseLabInPlace converts Lab values to their normalised [0,1] encoding
+// for LUT processing, overwriting lab[:3]. Input: L in [0, 100], a and b in
+// [-128, 127]; output: normalised values in [0, 1].
+func normaliseLabInPlace(lab []float64) {
 	if len(lab) < 3 {
-		return lab
+		return
 	}
-	return []float64{
-		lab[0] / 100.0,           // L: [0, 100] -> [0, 1]
-		(lab[1] + 128.0) / 255.0, // a: [-128, 127] -> [0, 1]
-		(lab[2] + 128.0) / 255.0, // b: [-128, 127] -> [0, 1]
-	}
+	lab[0] = lab[0] / 100.0
+	lab[1] = (lab[1] + 128.0) / 255.0
+	lab[2] = (lab[2] + 128.0) / 255.0
 }
 
-// denormaliseLab converts normalised [0,1] Lab encoding to actual Lab values.
-// Input: normalised values in [0, 1].
-// Output: L in [0, 100], a and b in [-128, 127].
-func denormaliseLab(lab []float64) []float64 {
+// denormaliseLabInPlace converts normalised [0,1] Lab encoding back to actual
+// Lab values, overwriting lab[:3]. It is the inverse of [normaliseLabInPlace].
+func denormaliseLabInPlace(lab []float64) {
 	if len(lab) < 3 {
-		return lab
+		return
 	}
-	return []float64{
-		lab[0] * 100.0,       // L: [0, 1] -> [0, 100]
-		lab[1]*255.0 - 128.0, // a: [0, 1] -> [-128, 127]
-		lab[2]*255.0 - 128.0, // b: [0, 1] -> [-128, 127]
-	}
+	lab[0] = lab[0] * 100.0
+	lab[1] = lab[1]*255.0 - 128.0
+	lab[2] = lab[2]*255.0 - 128.0
 }
 
 // invertMatrix3x3 returns the inverse of a 3x3 matrix.

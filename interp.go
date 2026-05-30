@@ -16,17 +16,20 @@
 
 package icc
 
-// tetrahedralInterp3D performs tetrahedral interpolation in a 3D CLUT.
-// The input r, g, b values are in [0, 1].
-// The clut contains flattened data with outChannels values per grid point.
-// gridSize is the number of grid points per dimension (same for all three).
-func tetrahedralInterp3D(clut []float64, gridSize int, outChannels int, r, g, b float64) []float64 {
+// tetrahedralInterp3DInto performs tetrahedral interpolation in a 3D CLUT,
+// writing the result into out[:outChannels] supplied by the caller.
+// The input r, g, b values are in [0, 1]. The clut contains flattened data with
+// outChannels values per grid point; gridSize is the number of grid points per
+// dimension (same for all three).
+func tetrahedralInterp3DInto(clut []float64, gridSize int, outChannels int, r, g, b float64, out []float64) {
 	if gridSize < 2 {
-		out := make([]float64, outChannels)
-		if len(clut) >= outChannels {
-			copy(out, clut[:outChannels])
+		for i := range outChannels {
+			out[i] = 0
 		}
-		return out
+		if len(clut) >= outChannels {
+			copy(out[:outChannels], clut[:outChannels])
+		}
+		return
 	}
 
 	// scale to grid coordinates
@@ -87,8 +90,6 @@ func tetrahedralInterp3D(clut []float64, gridSize int, outChannels int, r, g, b 
 	c110 := base + rStride + gStride
 	c111 := base + rStride + gStride + stride
 
-	out := make([]float64, outChannels)
-
 	// tetrahedral interpolation - select tetrahedron based on which
 	// fractional component is largest
 	if fr > fg {
@@ -144,30 +145,23 @@ func tetrahedralInterp3D(clut []float64, gridSize int, outChannels int, r, g, b 
 			}
 		}
 	}
-
-	return out
 }
 
-// multilinearInterp performs n-dimensional linear interpolation.
-// The input values are in [0, 1].
-// gridPoints contains the grid size for each dimension.
-func multilinearInterp(clut []float64, gridPoints []int, outChannels int, input []float64) []float64 {
+// multilinearInterpInto performs n-dimensional linear interpolation, writing the
+// result into out[:outChannels]. The input values are in [0, 1] and gridPoints
+// contains the grid size for each dimension. It uses the caller-supplied strides
+// (see [computeStrides]) and the scratch slices indices and fracs (each of length
+// >= len(gridPoints)).
+func multilinearInterpInto(clut []float64, gridPoints, strides []int, outChannels int, input, out []float64, indices []int, fracs []float64) {
 	nDims := len(gridPoints)
 	if nDims == 0 || len(input) != nDims {
-		return make([]float64, outChannels)
-	}
-
-	// compute strides
-	strides := make([]int, nDims)
-	stride := outChannels
-	for i := nDims - 1; i >= 0; i-- {
-		strides[i] = stride
-		stride *= gridPoints[i]
+		for i := range outChannels {
+			out[i] = 0
+		}
+		return
 	}
 
 	// compute grid positions and fractions
-	indices := make([]int, nDims)
-	fracs := make([]float64, nDims)
 	for i := range nDims {
 		scale := float64(gridPoints[i] - 1)
 		pos := input[i] * scale
@@ -179,10 +173,18 @@ func multilinearInterp(clut []float64, gridPoints []int, outChannels int, input 
 		fracs[i] = clamp(pos-float64(idx), 0, 1)
 	}
 
+	// base offset (loop-invariant across corners)
+	baseOffset := 0
+	for d := range nDims {
+		baseOffset += indices[d] * strides[d]
+	}
+
+	for i := range outChannels {
+		out[i] = 0
+	}
+
 	// interpolate: iterate over 2^nDims corners
 	numCorners := 1 << nDims
-	out := make([]float64, outChannels)
-
 	for corner := range numCorners {
 		// compute offset and weight for this corner
 		offset := 0
@@ -196,12 +198,6 @@ func multilinearInterp(clut []float64, gridPoints []int, outChannels int, input 
 			}
 		}
 
-		// base offset
-		baseOffset := 0
-		for d := range nDims {
-			baseOffset += indices[d] * strides[d]
-		}
-
 		for i := range outChannels {
 			idx := baseOffset + offset + i
 			if idx < len(clut) {
@@ -209,6 +205,15 @@ func multilinearInterp(clut []float64, gridPoints []int, outChannels int, input 
 			}
 		}
 	}
+}
 
-	return out
+// computeStrides fills strides[i] with the element stride of dimension i of a
+// flattened CLUT with the given per-dimension gridPoints and outChannels values
+// per grid point. strides must have length >= len(gridPoints).
+func computeStrides(strides, gridPoints []int, outChannels int) {
+	stride := outChannels
+	for i := len(gridPoints) - 1; i >= 0; i-- {
+		strides[i] = stride
+		stride *= gridPoints[i]
+	}
 }

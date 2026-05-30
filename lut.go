@@ -29,6 +29,13 @@ type Lut interface {
 	// Input values should be normalised to [0, 1].
 	Apply(input []float64) []float64
 
+	// ApplyInto transforms input through the LUT, writing OutputChannels()
+	// values into dst. The dst slice must have length >= OutputChannels().
+	// It is the allocation-free form of Apply: pass a non-nil ws to reuse
+	// scratch buffers across calls, or nil to allocate internally. A Workspace
+	// must not be used from more than one goroutine at a time.
+	ApplyInto(input, dst []float64, ws *Workspace)
+
 	// Encode converts the LUT to ICC tag data in its native format.
 	Encode() ([]byte, error)
 
@@ -85,45 +92,24 @@ func (l *Lut8) OutputChannels() int { return l.outputChannels }
 // Apply transforms input values through the LUT.
 // Processing order: Matrix → InputCurves → CLUT → OutputCurves
 func (l *Lut8) Apply(input []float64) []float64 {
-	if len(input) != l.inputChannels {
-		return make([]float64, l.outputChannels)
-	}
-
-	values := make([]float64, len(input))
-	copy(values, input)
-
-	// matrix (applied first for lut8/lut16)
-	values = applyMatrix3x3(l.matrix, values)
-
-	// input curves
-	values = applyCurves(l.inputCurves, values)
-
-	// CLUT
-	values = l.applyCLUT(values)
-
-	// output curves
-	values = applyCurves(l.outputCurves, values)
-
-	// clamp output
-	for i := range values {
-		values[i] = clamp(values[i], 0, 1)
-	}
-
-	return values
+	dst := make([]float64, l.outputChannels)
+	l.ApplyInto(input, dst, nil)
+	return dst
 }
 
-func (l *Lut8) applyCLUT(values []float64) []float64 {
-	if l.clut == nil || l.gridPoints == 0 {
-		return values
+// ApplyInto implements the [Lut] interface.
+func (l *Lut8) ApplyInto(input, dst []float64, ws *Workspace) {
+	if len(input) != l.inputChannels {
+		zeroFloats(dst[:l.outputChannels])
+		return
 	}
-	gridPoints := make([]int, l.inputChannels)
-	for i := range gridPoints {
-		gridPoints[i] = l.gridPoints
-	}
-	if len(values) == 3 {
-		return tetrahedralInterp3D(l.clut, l.gridPoints, l.outputChannels, values[0], values[1], values[2])
-	}
-	return multilinearInterp(l.clut, gridPoints, l.outputChannels, values)
+	v := ws.values(l.inputChannels)
+	copy(v, input)
+	applyMatrix3x3InPlace(l.matrix, v)
+	applyCurves(l.inputCurves, v)
+	clutScalarGridInto(l.clut, l.gridPoints, l.inputChannels, l.outputChannels, v, dst, ws)
+	applyCurves(l.outputCurves, dst[:l.outputChannels])
+	clampInto(dst[:l.outputChannels])
 }
 
 // Encode converts the LUT to lut8Type (mft1) format.
@@ -316,45 +302,24 @@ func (l *Lut16) OutputChannels() int { return l.outputChannels }
 // Apply transforms input values through the LUT.
 // Processing order: Matrix → InputCurves → CLUT → OutputCurves
 func (l *Lut16) Apply(input []float64) []float64 {
-	if len(input) != l.inputChannels {
-		return make([]float64, l.outputChannels)
-	}
-
-	values := make([]float64, len(input))
-	copy(values, input)
-
-	// matrix (applied first for lut8/lut16)
-	values = applyMatrix3x3(l.matrix, values)
-
-	// input curves
-	values = applyCurves(l.inputCurves, values)
-
-	// CLUT
-	values = l.applyCLUT(values)
-
-	// output curves
-	values = applyCurves(l.outputCurves, values)
-
-	// clamp output
-	for i := range values {
-		values[i] = clamp(values[i], 0, 1)
-	}
-
-	return values
+	dst := make([]float64, l.outputChannels)
+	l.ApplyInto(input, dst, nil)
+	return dst
 }
 
-func (l *Lut16) applyCLUT(values []float64) []float64 {
-	if l.clut == nil || l.gridPoints == 0 {
-		return values
+// ApplyInto implements the [Lut] interface.
+func (l *Lut16) ApplyInto(input, dst []float64, ws *Workspace) {
+	if len(input) != l.inputChannels {
+		zeroFloats(dst[:l.outputChannels])
+		return
 	}
-	gridPoints := make([]int, l.inputChannels)
-	for i := range gridPoints {
-		gridPoints[i] = l.gridPoints
-	}
-	if len(values) == 3 {
-		return tetrahedralInterp3D(l.clut, l.gridPoints, l.outputChannels, values[0], values[1], values[2])
-	}
-	return multilinearInterp(l.clut, gridPoints, l.outputChannels, values)
+	v := ws.values(l.inputChannels)
+	copy(v, input)
+	applyMatrix3x3InPlace(l.matrix, v)
+	applyCurves(l.inputCurves, v)
+	clutScalarGridInto(l.clut, l.gridPoints, l.inputChannels, l.outputChannels, v, dst, ws)
+	applyCurves(l.outputCurves, dst[:l.outputChannels])
+	clampInto(dst[:l.outputChannels])
 }
 
 // Encode converts the LUT to lut16Type (mft2) format.
@@ -559,44 +524,25 @@ func (l *LutAToB) OutputChannels() int { return l.outputChannels }
 // Apply transforms input values through the LUT.
 // Processing order: ACurves → CLUT → MCurves → Matrix → BCurves
 func (l *LutAToB) Apply(input []float64) []float64 {
-	if len(input) != l.inputChannels {
-		return make([]float64, l.outputChannels)
-	}
-
-	values := make([]float64, len(input))
-	copy(values, input)
-
-	// A curves (input)
-	values = applyCurves(l.aCurves, values)
-
-	// CLUT
-	values = l.applyCLUT(values)
-
-	// M curves
-	values = applyCurves(l.mCurves, values)
-
-	// matrix
-	values = applyMatrix3x4(l.matrix, values)
-
-	// B curves (output)
-	values = applyCurves(l.bCurves, values)
-
-	// clamp output
-	for i := range values {
-		values[i] = clamp(values[i], 0, 1)
-	}
-
-	return values
+	dst := make([]float64, l.outputChannels)
+	l.ApplyInto(input, dst, nil)
+	return dst
 }
 
-func (l *LutAToB) applyCLUT(values []float64) []float64 {
-	if l.clut == nil || len(l.gridPoints) != len(values) {
-		return values
+// ApplyInto implements the [Lut] interface.
+func (l *LutAToB) ApplyInto(input, dst []float64, ws *Workspace) {
+	if len(input) != l.inputChannels {
+		zeroFloats(dst[:l.outputChannels])
+		return
 	}
-	if len(values) == 3 && l.gridPoints[0] == l.gridPoints[1] && l.gridPoints[1] == l.gridPoints[2] {
-		return tetrahedralInterp3D(l.clut, l.gridPoints[0], l.outputChannels, values[0], values[1], values[2])
-	}
-	return multilinearInterp(l.clut, l.gridPoints, l.outputChannels, values)
+	v := ws.values(l.inputChannels)
+	copy(v, input)
+	applyCurves(l.aCurves, v)
+	clutGridInto(l.clut, l.gridPoints, l.outputChannels, v, dst, ws)
+	applyCurves(l.mCurves, dst[:l.outputChannels])
+	applyMatrix3x4InPlace(l.matrix, dst[:l.outputChannels])
+	applyCurves(l.bCurves, dst[:l.outputChannels])
+	clampInto(dst[:l.outputChannels])
 }
 
 // Encode converts the LUT to lutAtoBType (mAB) format.
@@ -703,44 +649,25 @@ func (l *LutBToA) OutputChannels() int { return l.outputChannels }
 // Apply transforms input values through the LUT.
 // Processing order: BCurves → Matrix → MCurves → CLUT → ACurves
 func (l *LutBToA) Apply(input []float64) []float64 {
-	if len(input) != l.inputChannels {
-		return make([]float64, l.outputChannels)
-	}
-
-	values := make([]float64, len(input))
-	copy(values, input)
-
-	// B curves (input)
-	values = applyCurves(l.bCurves, values)
-
-	// matrix
-	values = applyMatrix3x4(l.matrix, values)
-
-	// M curves
-	values = applyCurves(l.mCurves, values)
-
-	// CLUT
-	values = l.applyCLUT(values)
-
-	// A curves (output)
-	values = applyCurves(l.aCurves, values)
-
-	// clamp output
-	for i := range values {
-		values[i] = clamp(values[i], 0, 1)
-	}
-
-	return values
+	dst := make([]float64, l.outputChannels)
+	l.ApplyInto(input, dst, nil)
+	return dst
 }
 
-func (l *LutBToA) applyCLUT(values []float64) []float64 {
-	if l.clut == nil || len(l.gridPoints) != len(values) {
-		return values
+// ApplyInto implements the [Lut] interface.
+func (l *LutBToA) ApplyInto(input, dst []float64, ws *Workspace) {
+	if len(input) != l.inputChannels {
+		zeroFloats(dst[:l.outputChannels])
+		return
 	}
-	if len(values) == 3 && l.gridPoints[0] == l.gridPoints[1] && l.gridPoints[1] == l.gridPoints[2] {
-		return tetrahedralInterp3D(l.clut, l.gridPoints[0], l.outputChannels, values[0], values[1], values[2])
-	}
-	return multilinearInterp(l.clut, l.gridPoints, l.outputChannels, values)
+	v := ws.values(l.inputChannels)
+	copy(v, input)
+	applyCurves(l.bCurves, v)
+	applyMatrix3x4InPlace(l.matrix, v)
+	applyCurves(l.mCurves, v)
+	clutGridInto(l.clut, l.gridPoints, l.outputChannels, v, dst, ws)
+	applyCurves(l.aCurves, dst[:l.outputChannels])
+	clampInto(dst[:l.outputChannels])
 }
 
 // Encode converts the LUT to lutBtoAType (mBA) format.
@@ -899,27 +826,82 @@ func applyCurves(curves []*Curve, values []float64) []float64 {
 	return values
 }
 
-func applyMatrix3x3(m []float64, values []float64) []float64 {
-	if m == nil || len(values) != 3 {
-		return values
+// applyMatrix3x3InPlace multiplies the 3x3 matrix m by v[:3], overwriting v
+// with the result. It is a no-op if m is nil or v is not of length 3.
+func applyMatrix3x3InPlace(m, v []float64) {
+	if m == nil || len(v) != 3 {
+		return
 	}
-	x, y, z := values[0], values[1], values[2]
-	return []float64{
-		m[0]*x + m[1]*y + m[2]*z,
-		m[3]*x + m[4]*y + m[5]*z,
-		m[6]*x + m[7]*y + m[8]*z,
+	x, y, z := v[0], v[1], v[2]
+	v[0] = m[0]*x + m[1]*y + m[2]*z
+	v[1] = m[3]*x + m[4]*y + m[5]*z
+	v[2] = m[6]*x + m[7]*y + m[8]*z
+}
+
+// applyMatrix3x4InPlace multiplies the 3x4 affine matrix m by v[:3], overwriting
+// v with the result. It is a no-op if m is nil or v is not of length 3.
+func applyMatrix3x4InPlace(m, v []float64) {
+	if m == nil || len(v) != 3 {
+		return
+	}
+	x, y, z := v[0], v[1], v[2]
+	v[0] = m[0]*x + m[1]*y + m[2]*z + m[9]
+	v[1] = m[3]*x + m[4]*y + m[5]*z + m[10]
+	v[2] = m[6]*x + m[7]*y + m[8]*z + m[11]
+}
+
+// clutGridInto applies a CLUT to values, writing outChannels results into dst.
+// gridPoints holds the grid size of each input dimension. Scratch is taken from
+// ws. It is the allocation-free counterpart of the per-LUT applyCLUT methods.
+func clutGridInto(clut []float64, gridPoints []int, outChannels int, values, dst []float64, ws *Workspace) {
+	if clut == nil || len(gridPoints) != len(values) {
+		// degenerate: mirror applyCLUT returning values unchanged
+		n := min(len(values), outChannels)
+		zeroFloats(dst[:outChannels])
+		copy(dst[:n], values[:n])
+		return
+	}
+	n := len(gridPoints)
+	if n == 3 && gridPoints[0] == gridPoints[1] && gridPoints[1] == gridPoints[2] {
+		tetrahedralInterp3DInto(clut, gridPoints[0], outChannels, values[0], values[1], values[2], dst)
+		return
+	}
+	strides := ws.strides(n)
+	computeStrides(strides, gridPoints, outChannels)
+	indices := ws.indices(n)
+	fracs := ws.fracs(n)
+	multilinearInterpInto(clut, gridPoints, strides, outChannels, values, dst, indices, fracs)
+}
+
+// clutScalarGridInto is [clutGridInto] for LUTs (Lut8/Lut16) whose grid size is
+// the same scalar gridSize for every one of the inputChannels dimensions.
+func clutScalarGridInto(clut []float64, gridSize, inputChannels, outChannels int, values, dst []float64, ws *Workspace) {
+	if clut == nil || gridSize == 0 {
+		n := min(len(values), outChannels)
+		zeroFloats(dst[:outChannels])
+		copy(dst[:n], values[:n])
+		return
+	}
+	if len(values) == 3 {
+		tetrahedralInterp3DInto(clut, gridSize, outChannels, values[0], values[1], values[2], dst)
+		return
+	}
+	grid := ws.grid(inputChannels)
+	for i := range grid {
+		grid[i] = gridSize
+	}
+	clutGridInto(clut, grid, outChannels, values, dst, ws)
+}
+
+func zeroFloats(v []float64) {
+	for i := range v {
+		v[i] = 0
 	}
 }
 
-func applyMatrix3x4(m []float64, values []float64) []float64 {
-	if m == nil || len(values) != 3 {
-		return values
-	}
-	x, y, z := values[0], values[1], values[2]
-	return []float64{
-		m[0]*x + m[1]*y + m[2]*z + m[9],
-		m[3]*x + m[4]*y + m[5]*z + m[10],
-		m[6]*x + m[7]*y + m[8]*z + m[11],
+func clampInto(v []float64) {
+	for i := range v {
+		v[i] = clamp(v[i], 0, 1)
 	}
 }
 

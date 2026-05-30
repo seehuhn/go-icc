@@ -408,6 +408,16 @@ func (c *Curve) invertSampled(y float64) float64 {
 	return c.inverseTable[idx] + frac*(c.inverseTable[idx+1]-c.inverseTable[idx])
 }
 
+// prepareInverse eagerly builds the cached inverse table used by [Curve.Invert]
+// for sampled curves, so that subsequent Invert calls only read shared state and
+// can run concurrently. It is a no-op for gamma and parametric curves (which
+// invert analytically) and for sampled curves whose table is already built.
+func (c *Curve) prepareInverse() {
+	if c.Table != nil && c.inverseTable == nil {
+		c.buildInverseTable()
+	}
+}
+
 func (c *Curve) buildInverseTable() {
 	const invSize = 4096
 	c.inverseTable = make([]float64, invSize)

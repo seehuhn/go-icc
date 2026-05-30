@@ -110,20 +110,20 @@ func TestSRGBProfilesTransform(t *testing.T) {
 			}
 
 			// D50 white point
-			X, Y, Z := tr.ToXYZ([]float64{1, 1, 1})
+			X, Y, Z := tr.ToXYZ([]float64{1, 1, 1}, nil)
 			if math.Abs(X-0.9642) > 0.02 || math.Abs(Y-1.0) > 0.02 || math.Abs(Z-0.8249) > 0.02 {
 				t.Errorf("white -> XYZ = (%v, %v, %v), want D50 white point", X, Y, Z)
 			}
 
 			// black
-			X, Y, Z = tr.ToXYZ([]float64{0, 0, 0})
+			X, Y, Z = tr.ToXYZ([]float64{0, 0, 0}, nil)
 			if math.Abs(X) > 0.01 || math.Abs(Y) > 0.01 || math.Abs(Z) > 0.01 {
 				t.Errorf("black -> XYZ = (%v, %v, %v), want near zero", X, Y, Z)
 			}
 
 			// luminance of red < green (standard sRGB property)
-			_, yR, _ := tr.ToXYZ([]float64{1, 0, 0})
-			_, yG, _ := tr.ToXYZ([]float64{0, 1, 0})
+			_, yR, _ := tr.ToXYZ([]float64{1, 0, 0}, nil)
+			_, yG, _ := tr.ToXYZ([]float64{0, 1, 0}, nil)
 			if yR >= yG {
 				t.Errorf("red luminance (%v) >= green luminance (%v)", yR, yG)
 			}
@@ -169,7 +169,7 @@ func TestSRGBProfilesPrimaries(t *testing.T) {
 
 			for _, pp := range primaries {
 				t.Run(pp.name, func(t *testing.T) {
-					X, Y, Z := tr.ToXYZ(pp.input)
+					X, Y, Z := tr.ToXYZ(pp.input, nil)
 					const eps = 0.005
 					if math.Abs(X-pp.want.X) > eps ||
 						math.Abs(Y-pp.want.Y) > eps ||
@@ -239,21 +239,21 @@ func TestCMYKProfileTransform(t *testing.T) {
 	}
 
 	// CMYK white (no ink) should have high luminance
-	X, Y, Z := tr.ToXYZ([]float64{0, 0, 0, 0})
+	X, Y, Z := tr.ToXYZ([]float64{0, 0, 0, 0}, nil)
 	if Y < 0.5 {
 		t.Errorf("white (0,0,0,0) -> XYZ = (%v, %v, %v), want high luminance", X, Y, Z)
 	}
 
 	// CMYK black (full K) should have low luminance
-	X, Y, Z = tr.ToXYZ([]float64{0, 0, 0, 1})
+	X, Y, Z = tr.ToXYZ([]float64{0, 0, 0, 1}, nil)
 	if Y > 0.1 {
 		t.Errorf("black (0,0,0,1) -> XYZ = (%v, %v, %v), want low luminance", X, Y, Z)
 	}
 
 	// yellow should have higher luminance than cyan or magenta
-	_, yC, _ := tr.ToXYZ([]float64{1, 0, 0, 0})
-	_, yM, _ := tr.ToXYZ([]float64{0, 1, 0, 0})
-	_, yY, _ := tr.ToXYZ([]float64{0, 0, 1, 0})
+	_, yC, _ := tr.ToXYZ([]float64{1, 0, 0, 0}, nil)
+	_, yM, _ := tr.ToXYZ([]float64{0, 1, 0, 0}, nil)
+	_, yY, _ := tr.ToXYZ([]float64{0, 0, 1, 0}, nil)
 	if yY <= yC {
 		t.Errorf("yellow luminance (%v) <= cyan luminance (%v)", yY, yC)
 	}
@@ -297,7 +297,7 @@ func TestFromXYZInto(t *testing.T) {
 
 			for _, xyz := range xyzInputs {
 				want := tr.FromXYZ(xyz[0], xyz[1], xyz[2])
-				tr.FromXYZInto(xyz[0], xyz[1], xyz[2], dst)
+				tr.FromXYZInto(xyz[0], xyz[1], xyz[2], dst, nil)
 
 				for i := range nCh {
 					if dst[i] != want[i] {
@@ -345,7 +345,7 @@ func TestSRGBProfilesDeviceRoundTrip(t *testing.T) {
 			}
 
 			for _, rgb := range inputs {
-				X, Y, Z := fwd.ToXYZ(rgb)
+				X, Y, Z := fwd.ToXYZ(rgb, nil)
 				back := inv.FromXYZ(X, Y, Z)
 
 				for i := range rgb {

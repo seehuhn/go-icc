@@ -377,7 +377,7 @@ func TestGrayTRCNeutral(t *testing.T) {
 	}
 
 	for _, gray := range []float64{0.0, 0.25, 0.5, 0.75, 0.992, 1.0} {
-		X, Y, Z := fwd.ToXYZ([]float64{gray})
+		X, Y, Z := fwd.ToXYZ([]float64{gray}, nil)
 
 		// XYZ should be proportional to D50, not D65
 		if Y > 1e-6 {
@@ -417,7 +417,7 @@ func TestGrayTRCRoundTrip(t *testing.T) {
 		}
 
 		for _, gray := range []float64{0.0, 0.1, 0.5, 0.9, 1.0} {
-			X, Y, Z := fwd.ToXYZ([]float64{gray})
+			X, Y, Z := fwd.ToXYZ([]float64{gray}, nil)
 			back := rev.FromXYZ(X, Y, Z)
 			if len(back) != 1 || math.Abs(back[0]-gray) > 1e-4 {
 				t.Errorf("wp=%v gray=%.1f: round-trip gave %.6f",
