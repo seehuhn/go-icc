@@ -121,7 +121,7 @@ func TestBudgetMft1CLUTBomb(t *testing.T) {
 	// 21^3 × 15 = 138,915 float64 entries = 1,111,320 bytes.
 	// newBudget(0) = 1 MiB → CLUT alloc exceeds the budget.
 	data := makeMft1(3, 15, 21)
-	_, err := decodeLut8(newBudget(0), data)
+	_, err := decodeLUT8(newBudget(0), data)
 	wantBudgetExceeded(t, err)
 }
 
@@ -129,7 +129,7 @@ func TestBudgetMft1Fits(t *testing.T) {
 	// modest gridPoints leaves plenty of headroom in the 1 MiB base
 	// budget.
 	data := makeMft1(3, 1, 10)
-	if _, err := decodeLut8(newBudget(0), data); err != nil {
+	if _, err := decodeLUT8(newBudget(0), data); err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
 }
@@ -138,13 +138,13 @@ func TestBudgetMft2CLUTBomb(t *testing.T) {
 	// 3 input channels, 15 output channels, gridPoints=21 →
 	// CLUT entries 138,915 × 8 bytes = 1.06 MiB exceeds 1 MiB base.
 	data := makeMft2(3, 15, 21, 2, 2)
-	_, err := decodeLut16(newBudget(0), data)
+	_, err := decodeLUT16(newBudget(0), data)
 	wantBudgetExceeded(t, err)
 }
 
 func TestBudgetMft2Fits(t *testing.T) {
 	data := makeMft2(3, 1, 10, 2, 2)
-	if _, err := decodeLut16(newBudget(0), data); err != nil {
+	if _, err := decodeLUT16(newBudget(0), data); err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
 }

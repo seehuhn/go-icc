@@ -30,7 +30,11 @@ var ErrInvalidVersion = errors.New("ICC profile version not set")
 // Encode converts the profile to binary ICC format.
 //
 // The Version field must be set to a valid ICC version (e.g. [Version4_4_0]).
-// For version 4.0 and later, a profile ID checksum is computed and embedded.
+//
+// An MD5 profile ID is computed and embedded unless CheckSum is
+// [CheckSumMissing], independent of the profile version. A profile decoded
+// without an ID keeps CheckSum at CheckSumMissing, so the ID's absence is
+// preserved across a read-write-read cycle.
 func (p *Profile) Encode() ([]byte, error) {
 	if p.Version == 0 {
 		return nil, ErrInvalidVersion
@@ -97,12 +101,14 @@ func (p *Profile) Encode() ([]byte, error) {
 		}
 	}
 
-	// The entire profile, whose length is given by the size field in the
-	// header, with the profile flags field, rendering intent field, and
-	// profile ID field in the profile header temporarily set to zeros shall be
-	// used to calculate the ID.
-	h := md5.Sum(buf)
-	copy(buf[84:], h[:])
+	// Embed the profile ID unless the profile carries none. The entire profile,
+	// whose length is given by the size field in the header, with the profile
+	// flags, rendering intent, and profile ID fields temporarily set to zeros,
+	// is used to calculate the ID.
+	if p.CheckSum != CheckSumMissing {
+		h := md5.Sum(buf)
+		copy(buf[84:], h[:])
+	}
 
 	putUint32(buf, 44, p.Flags)
 	putUint32(buf, 64, uint32(p.RenderingIntent))

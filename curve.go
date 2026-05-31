@@ -34,23 +34,21 @@ import (
 // To create a curve:
 //   - Gamma curve (curveType): set Gamma only (e.g. &Curve{Gamma: 2.2})
 //   - Sampled curve (curveType): set Table only
-//   - Parametric curve (parametricCurveType): set FuncType and Params
+//   - Parametric curve (parametricCurveType): set Params
 type Curve struct {
-	// Gamma specifies the exponent for a simple gamma curve (curveType with
-	// n=1). The curve computes y = x^Gamma. Set to 1.0 for an identity curve
-	// (encoded as curveType with n=0). Ignored if Params or Table is set.
+	// Gamma specifies the exponent for a simple gamma curve, y = x^Gamma.
+	// Ignored if Params or Table is set.
 	Gamma float64
 
-	// FuncType and Params define an ICC parametricCurveType. FuncType selects
-	// the ICC function type (0-4) and Params provides the coefficients
+	// Params defines an ICC parametricCurveType. The number of coefficients
+	// selects the ICC function type and the meaning of each coefficient
 	// [g, a, b, c, d, e, f]:
-	//   - type 0: y = x^g
-	//   - type 1: y = (ax+b)^g for x >= -b/a, else y = 0
-	//   - type 2: y = (ax+b)^g + c for x >= -b/a, else y = c
-	//   - type 3: y = (ax+b)^g for x >= d, else y = cx
-	//   - type 4: y = (ax+b)^g + e for x >= d, else y = cx + f
-	FuncType int
-	Params   []float64 // [g], [g,a,b], [g,a,b,c], [g,a,b,c,d], or [g,a,b,c,d,e,f]
+	//   - 1 param  (type 0): y = x^g
+	//   - 3 params (type 1): y = (ax+b)^g for x >= -b/a, else y = 0
+	//   - 4 params (type 2): y = (ax+b)^g + c for x >= -b/a, else y = c
+	//   - 5 params (type 3): y = (ax+b)^g for x >= d, else y = cx
+	//   - 7 params (type 4): y = (ax+b)^g + e for x >= d, else y = cx + f
+	Params []float64
 
 	// Table specifies a sampled curve (curveType with n>1). Values are evenly
 	// spaced from input 0 to 1, with linear interpolation between samples.
@@ -61,6 +59,7 @@ type Curve struct {
 }
 
 // DecodeCurve decodes a curve from ICC tag data.
+// This is used for the RedTRC, GreenTRC, BlueTRC, and GrayTRC tags.
 // The data must be a curveType or parametricCurveType element.
 func DecodeCurve(data []byte) (*Curve, error) {
 	return decodeCurve(newBudget(int64(len(data))), data)
@@ -152,13 +151,12 @@ func decodeParametricCurve(b *membudget.Budget, data []byte) (*Curve, error) {
 	}
 
 	return &Curve{
-		FuncType: funcType,
-		Params:   params,
+		Params: params,
 	}, nil
 }
 
 // Evaluate computes the output value for an input value x in [0, 1].
-// The output is clamped to [0, 1] as required by the ICC specification.
+// The output is clamped to [0, 1].
 func (c *Curve) Evaluate(x float64) float64 {
 	x = clamp(x, 0, 1)
 
@@ -188,16 +186,16 @@ func (c *Curve) Evaluate(x float64) float64 {
 func (c *Curve) evaluateParametric(x float64) float64 {
 	g := c.Params[0]
 
-	switch c.FuncType {
-	case 0:
-		// y = x^g
+	switch len(c.Params) {
+	case 1:
+		// type 0: y = x^g
 		if x <= 0 {
 			return 0
 		}
 		return math.Pow(x, g)
 
-	case 1:
-		// y = (ax+b)^g for x >= -b/a, else y = 0
+	case 3:
+		// type 1: y = (ax+b)^g for x >= -b/a, else y = 0
 		a, b := c.Params[1], c.Params[2]
 		threshold := -b / a
 		if x >= threshold {
@@ -209,8 +207,8 @@ func (c *Curve) evaluateParametric(x float64) float64 {
 		}
 		return 0
 
-	case 2:
-		// y = (ax+b)^g + c for x >= -b/a, else y = c
+	case 4:
+		// type 2: y = (ax+b)^g + c for x >= -b/a, else y = c
 		a, b, cc := c.Params[1], c.Params[2], c.Params[3]
 		threshold := -b / a
 		if x >= threshold {
@@ -222,8 +220,8 @@ func (c *Curve) evaluateParametric(x float64) float64 {
 		}
 		return cc
 
-	case 3:
-		// y = (ax+b)^g for x >= d, else y = cx
+	case 5:
+		// type 3: y = (ax+b)^g for x >= d, else y = cx
 		a, b, cc, d := c.Params[1], c.Params[2], c.Params[3], c.Params[4]
 		if x >= d {
 			v := a*x + b
@@ -234,8 +232,8 @@ func (c *Curve) evaluateParametric(x float64) float64 {
 		}
 		return cc * x
 
-	case 4:
-		// y = (ax+b)^g + e for x >= d, else y = cx + f
+	case 7:
+		// type 4: y = (ax+b)^g + e for x >= d, else y = cx + f
 		a, b, cc, d, e, f := c.Params[1], c.Params[2], c.Params[3], c.Params[4], c.Params[5], c.Params[6]
 		if x >= d {
 			v := a*x + b
@@ -309,16 +307,16 @@ func (c *Curve) invertParametric(y float64) float64 {
 	}
 	invG := 1.0 / g
 
-	switch c.FuncType {
-	case 0:
-		// y = x^g => x = y^(1/g)
+	switch len(c.Params) {
+	case 1:
+		// type 0: y = x^g => x = y^(1/g)
 		if y <= 0 {
 			return 0
 		}
 		return math.Pow(y, invG)
 
-	case 1:
-		// y = (ax+b)^g => x = (y^(1/g) - b) / a
+	case 3:
+		// type 1: y = (ax+b)^g => x = (y^(1/g) - b) / a
 		a, b := c.Params[1], c.Params[2]
 		if a == 0 {
 			return 0
@@ -328,8 +326,8 @@ func (c *Curve) invertParametric(y float64) float64 {
 		}
 		return (math.Pow(y, invG) - b) / a
 
-	case 2:
-		// y = (ax+b)^g + c => x = ((y-c)^(1/g) - b) / a
+	case 4:
+		// type 2: y = (ax+b)^g + c => x = ((y-c)^(1/g) - b) / a
 		a, b, cc := c.Params[1], c.Params[2], c.Params[3]
 		if a == 0 {
 			return 0
@@ -340,8 +338,8 @@ func (c *Curve) invertParametric(y float64) float64 {
 		}
 		return (math.Pow(yc, invG) - b) / a
 
-	case 3:
-		// y = (ax+b)^g for x >= d, else y = cx
+	case 5:
+		// type 3: y = (ax+b)^g for x >= d, else y = cx
 		a, b, cc, d := c.Params[1], c.Params[2], c.Params[3], c.Params[4]
 		// threshold output is at cc*d
 		yThreshold := cc * d
@@ -359,8 +357,8 @@ func (c *Curve) invertParametric(y float64) float64 {
 		}
 		return (math.Pow(y, invG) - b) / a
 
-	case 4:
-		// y = (ax+b)^g + e for x >= d, else y = cx + f
+	case 7:
+		// type 4: y = (ax+b)^g + e for x >= d, else y = cx + f
 		a, b, cc, d, e, f := c.Params[1], c.Params[2], c.Params[3], c.Params[4], c.Params[5], c.Params[6]
 		// threshold output is at cc*d + f
 		yThreshold := cc*d + f
@@ -464,7 +462,7 @@ func (c *Curve) IsIdentity() bool {
 	if c.Gamma == 1.0 && c.Params == nil && c.Table == nil {
 		return true
 	}
-	if c.Params != nil && c.FuncType == 0 && c.Params[0] == 1.0 {
+	if len(c.Params) == 1 && c.Params[0] == 1.0 {
 		return true
 	}
 	return false
@@ -503,34 +501,37 @@ func (c *Curve) encodeCurveType() []byte {
 	buf := make([]byte, 14)
 	copy(buf[0:4], "curv")
 	putUint32(buf, 8, 1)
-	// encode gamma as u8Fixed8Number
-	gamma := uint16(c.Gamma * 256.0)
+	// encode gamma as u8Fixed8Number: round to the nearest 1/256 and clamp to
+	// the representable range [0, 255 + 255/256], since the format cannot hold
+	// larger exponents (ICC.1:2022 §4.9, §10.6).
+	gamma := uint16(clamp(math.Round(c.Gamma*256.0), 0, 0xFFFF))
 	putUint16(buf, 12, gamma)
 	return buf
 }
 
 func (c *Curve) encodeParametric() []byte {
-	var numParams int
-	switch c.FuncType {
-	case 0:
-		numParams = 1
+	numParams := len(c.Params)
+	var funcType uint16
+	switch numParams {
 	case 1:
-		numParams = 3
-	case 2:
-		numParams = 4
+		funcType = 0
 	case 3:
-		numParams = 5
+		funcType = 1
 	case 4:
-		numParams = 7
+		funcType = 2
+	case 5:
+		funcType = 3
+	case 7:
+		funcType = 4
 	default:
-		numParams = len(c.Params)
+		panic("icc: invalid number of parametric curve coefficients")
 	}
 
 	buf := make([]byte, 12+numParams*4)
 	copy(buf[0:4], "para")
-	putUint16(buf, 8, uint16(c.FuncType))
-	for i := 0; i < numParams && i < len(c.Params); i++ {
-		putS15Fixed16(buf, 12+i*4, c.Params[i])
+	putUint16(buf, 8, funcType)
+	for i, v := range c.Params {
+		putS15Fixed16(buf, 12+i*4, v)
 	}
 	return buf
 }

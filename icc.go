@@ -14,39 +14,6 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-// Package icc reads and writes ICC colour profiles.
-//
-// ICC profiles describe how to convert colours between device colour spaces
-// (such as RGB or CMYK) and a device-independent Profile Connection Space (PCS).
-// The PCS is either CIEXYZ or CIELAB, both based on the D50 illuminant.
-//
-// # Reading and Writing Profiles
-//
-// Use [Decode] to read an ICC profile from binary data, and [Profile.Encode]
-// to convert a profile back to binary form:
-//
-//	p, err := icc.Decode(data)
-//	if err != nil {
-//	    // handle error
-//	}
-//	// inspect p.Class, p.ColorSpace, p.Version, p.TagData, etc.
-//
-//	encoded, err := p.Encode()
-//
-// # Colour Transformations
-//
-// To convert colours using a profile, create a [Transform] with [NewTransform]:
-//
-//	t, err := icc.NewTransform(p, icc.DeviceToPCS, icc.Perceptual)
-//	if err != nil {
-//	    // handle error
-//	}
-//	X, Y, Z := t.ToXYZ([]float64{r, g, b}, nil)  // device RGB to PCS XYZ
-//
-// For the reverse direction:
-//
-//	t, err := icc.NewTransform(p, icc.PCSToDevice, icc.Perceptual)
-//	rgb := t.FromXYZ(X, Y, Z)  // PCS XYZ to device RGB
 package icc
 
 import (
@@ -76,8 +43,10 @@ type Profile struct {
 	RenderingIntent    RenderingIntent
 	Creator            uint32
 
-	// CheckSum indicates whether the profile's embedded checksum is valid.
-	// This is only meaningful for profiles read using Decode.
+	// CheckSum reports whether the profile carries an embedded ID and, after
+	// [Decode], whether that ID is valid. It also directs [Profile.Encode],
+	// which embeds an ID unless CheckSum is [CheckSumMissing]. The zero value
+	// is [CheckSumValid], so a profile built from scratch gets an ID.
 	CheckSum CheckSum
 
 	// TagData maps tag signatures to their raw binary data.
@@ -387,9 +356,13 @@ func (c CheckSum) String() string {
 }
 
 // Possible values of the CheckSum field.
+//
+// The zero value is CheckSumValid so that a from-scratch profile gets an ID
+// embedded by [Profile.Encode]. [Decode] reports CheckSumMissing for a profile
+// that carries no ID, so a read-write-read cycle preserves the ID's presence.
 const (
-	CheckSumMissing CheckSum = iota
-	CheckSumValid
+	CheckSumValid CheckSum = iota
+	CheckSumMissing
 	CheckSumInvalid
 )
 

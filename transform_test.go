@@ -64,8 +64,7 @@ func TestCurveGammaInvert(t *testing.T) {
 func TestCurveParametricType0(t *testing.T) {
 	// type 0: y = x^g (same as gamma curve)
 	c := &Curve{
-		FuncType: 0,
-		Params:   []float64{2.2},
+		Params: []float64{2.2},
 	}
 
 	got := c.Evaluate(0.5)
@@ -92,8 +91,7 @@ func TestCurveParametricType3(t *testing.T) {
 	d := 0.04045
 
 	c := &Curve{
-		FuncType: 3,
-		Params:   []float64{g, a, b, cc, d},
+		Params: []float64{g, a, b, cc, d},
 	}
 
 	tests := []float64{0.0, 0.01, 0.04, 0.04045, 0.05, 0.1, 0.5, 1.0}
@@ -152,8 +150,8 @@ func TestCurveIdentity(t *testing.T) {
 	}{
 		{"gamma 1.0", &Curve{Gamma: 1.0}, true},
 		{"gamma 2.2", &Curve{Gamma: 2.2}, false},
-		{"type 0 gamma 1.0", &Curve{FuncType: 0, Params: []float64{1.0}}, true},
-		{"type 0 gamma 2.2", &Curve{FuncType: 0, Params: []float64{2.2}}, false},
+		{"type 0 gamma 1.0", &Curve{Params: []float64{1.0}}, true},
+		{"type 0 gamma 2.2", &Curve{Params: []float64{2.2}}, false},
 	}
 
 	for _, tt := range tests {
@@ -371,13 +369,13 @@ func TestGrayTRCNeutral(t *testing.T) {
 	d65WP := [3]float64{0.9505, 1.0, 1.0890}
 	p := makeGrayProfile(2.2, d65WP)
 
-	fwd, err := NewTransform(p, DeviceToPCS, Perceptual)
+	fwd, err := NewTransform(p, Perceptual)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	for _, gray := range []float64{0.0, 0.25, 0.5, 0.75, 0.992, 1.0} {
-		X, Y, Z := fwd.ToXYZ([]float64{gray}, nil)
+		X, Y, Z := fwd.ToXYZ([]float64{gray}, &Workspace{})
 
 		// XYZ should be proportional to D50, not D65
 		if Y > 1e-6 {
@@ -407,18 +405,15 @@ func TestGrayTRCRoundTrip(t *testing.T) {
 	} {
 		p := makeGrayProfile(2.2, wp)
 
-		fwd, err := NewTransform(p, DeviceToPCS, Perceptual)
-		if err != nil {
-			t.Fatal(err)
-		}
-		rev, err := NewTransform(p, PCSToDevice, Perceptual)
+		tr, err := NewTransform(p, Perceptual)
 		if err != nil {
 			t.Fatal(err)
 		}
 
 		for _, gray := range []float64{0.0, 0.1, 0.5, 0.9, 1.0} {
-			X, Y, Z := fwd.ToXYZ([]float64{gray}, nil)
-			back := rev.FromXYZ(X, Y, Z)
+			X, Y, Z := tr.ToXYZ([]float64{gray}, &Workspace{})
+			back := make([]float64, tr.Channels())
+			tr.FromXYZ(X, Y, Z, back, &Workspace{})
 			if len(back) != 1 || math.Abs(back[0]-gray) > 1e-4 {
 				t.Errorf("wp=%v gray=%.1f: round-trip gave %.6f",
 					wp, gray, back[0])
@@ -465,9 +460,6 @@ func TestDecodeParametricCurve(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode parametric curve: %v", err)
 	}
-	if c.FuncType != 0 {
-		t.Errorf("funcType = %d, want 0", c.FuncType)
-	}
 	if len(c.Params) != 1 {
 		t.Errorf("params len = %d, want 1", len(c.Params))
 	}
@@ -477,20 +469,20 @@ func TestDecodeParametricCurve(t *testing.T) {
 	}
 }
 
-func TestLutFallbackChain(t *testing.T) {
+func TestLUTFallbackChain(t *testing.T) {
 	tests := []struct {
 		name   string
-		dir    Direction
+		dir    direction
 		intent RenderingIntent
 		want   []TagType
 	}{
-		{"DeviceToPCS/Perceptual", DeviceToPCS, Perceptual, []TagType{AToB0, AToB1, AToB2}},
-		{"DeviceToPCS/RelativeColorimetric", DeviceToPCS, RelativeColorimetric, []TagType{AToB1, AToB0, AToB2}},
-		{"DeviceToPCS/AbsoluteColorimetric", DeviceToPCS, AbsoluteColorimetric, []TagType{AToB1, AToB0, AToB2}},
-		{"DeviceToPCS/Saturation", DeviceToPCS, Saturation, []TagType{AToB2, AToB0, AToB1}},
-		{"PCSToDevice/Perceptual", PCSToDevice, Perceptual, []TagType{BToA0, BToA1, BToA2}},
-		{"PCSToDevice/RelativeColorimetric", PCSToDevice, RelativeColorimetric, []TagType{BToA1, BToA0, BToA2}},
-		{"PCSToDevice/Saturation", PCSToDevice, Saturation, []TagType{BToA2, BToA0, BToA1}},
+		{"deviceToPCS/Perceptual", deviceToPCS, Perceptual, []TagType{AToB0, AToB1, AToB2}},
+		{"deviceToPCS/RelativeColorimetric", deviceToPCS, RelativeColorimetric, []TagType{AToB1, AToB0, AToB2}},
+		{"deviceToPCS/AbsoluteColorimetric", deviceToPCS, AbsoluteColorimetric, []TagType{AToB1, AToB0, AToB2}},
+		{"deviceToPCS/Saturation", deviceToPCS, Saturation, []TagType{AToB2, AToB0, AToB1}},
+		{"pcsToDevice/Perceptual", pcsToDevice, Perceptual, []TagType{BToA0, BToA1, BToA2}},
+		{"pcsToDevice/RelativeColorimetric", pcsToDevice, RelativeColorimetric, []TagType{BToA1, BToA0, BToA2}},
+		{"pcsToDevice/Saturation", pcsToDevice, Saturation, []TagType{BToA2, BToA0, BToA1}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -507,48 +499,21 @@ func TestLutFallbackChain(t *testing.T) {
 	}
 }
 
-func TestInitLutFallback(t *testing.T) {
-	// build a minimal mAB tag (LutAToB) - 32 bytes header, no sub-tags
-	mABTag := func() []byte {
-		b := make([]byte, 32)
-		copy(b[0:4], "mAB ")
-		b[8] = 3 // input channels
-		b[9] = 3 // output channels
-		return b
-	}
-
+func TestInitLUTCapability(t *testing.T) {
+	// a LUT profile now constructs successfully regardless of which direction's
+	// tags are present; the available directions are reported by CanToXYZ /
+	// CanFromXYZ rather than surfaced as construction errors.
 	tests := []struct {
-		name    string
-		tags    map[TagType][]byte
-		dir     Direction
-		intent  RenderingIntent
-		wantErr bool
+		name        string
+		tags        map[TagType][]byte
+		wantToXYZ   bool
+		wantFromXYZ bool
 	}{
-		{
-			name:   "AToB1 only, perceptual requested",
-			tags:   map[TagType][]byte{AToB1: mABTag()},
-			dir:    DeviceToPCS,
-			intent: Perceptual,
-		},
-		{
-			name:   "AToB2 only, relative requested",
-			tags:   map[TagType][]byte{AToB2: mABTag()},
-			dir:    DeviceToPCS,
-			intent: RelativeColorimetric,
-		},
-		{
-			name:   "BToA1 only, perceptual requested",
-			tags:   map[TagType][]byte{BToA1: mABTag()},
-			dir:    PCSToDevice,
-			intent: Perceptual,
-		},
-		{
-			name:    "no LUT tags",
-			tags:    map[TagType][]byte{AToB0: mABTag()}, // wrong direction
-			dir:     PCSToDevice,
-			intent:  Perceptual,
-			wantErr: true,
-		},
+		{"AToB1 only", map[TagType][]byte{AToB1: mABTag()}, true, false},
+		{"AToB2 only", map[TagType][]byte{AToB2: mABTag()}, true, false},
+		{"BToA1 only", map[TagType][]byte{BToA1: mABTag()}, false, true},
+		{"AToB0 only", map[TagType][]byte{AToB0: mABTag()}, true, false},
+		{"both directions", map[TagType][]byte{AToB0: mABTag(), BToA0: mABTag()}, true, true},
 	}
 
 	for _, tc := range tests {
@@ -558,13 +523,207 @@ func TestInitLutFallback(t *testing.T) {
 				PCS:        PCSXYZSpace,
 				TagData:    tc.tags,
 			}
-			_, err := NewTransform(p, tc.dir, tc.intent)
-			if tc.wantErr {
-				if err == nil {
-					t.Errorf("expected error, got nil")
-				}
-			} else if err != nil {
-				t.Errorf("unexpected error: %v", err)
+			tr, err := NewTransform(p, Perceptual)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got := tr.CanToXYZ(); got != tc.wantToXYZ {
+				t.Errorf("CanToXYZ = %v, want %v", got, tc.wantToXYZ)
+			}
+			if got := tr.CanFromXYZ(); got != tc.wantFromXYZ {
+				t.Errorf("CanFromXYZ = %v, want %v", got, tc.wantFromXYZ)
+			}
+		})
+	}
+}
+
+// mABTag builds a minimal mAB tag (LUTAToB), 32-byte header, no sub-tags.
+func mABTag() []byte {
+	b := make([]byte, 32)
+	copy(b[0:4], "mAB ")
+	b[8] = 3 // input channels
+	b[9] = 3 // output channels
+	return b
+}
+
+func TestOneDirectionalLUTDegrades(t *testing.T) {
+	t.Run("forward only", func(t *testing.T) {
+		p := &Profile{
+			ColorSpace: RGBSpace,
+			PCS:        PCSXYZSpace,
+			TagData:    map[TagType][]byte{AToB0: mABTag()},
+		}
+		tr, err := NewTransform(p, Perceptual)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !tr.CanToXYZ() || tr.CanFromXYZ() {
+			t.Fatalf("CanToXYZ=%v CanFromXYZ=%v, want true/false", tr.CanToXYZ(), tr.CanFromXYZ())
+		}
+		// unsupported reverse direction writes nothing
+		dst := []float64{-1, -2, -3}
+		tr.FromXYZ(0.3, 0.4, 0.5, dst, &Workspace{})
+		if dst[0] != -1 || dst[1] != -2 || dst[2] != -3 {
+			t.Errorf("FromXYZ wrote to dst on unsupported direction: %v", dst)
+		}
+	})
+
+	t.Run("reverse only", func(t *testing.T) {
+		p := &Profile{
+			ColorSpace: RGBSpace,
+			PCS:        PCSXYZSpace,
+			TagData:    map[TagType][]byte{BToA0: mABTag()},
+		}
+		tr, err := NewTransform(p, Perceptual)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if tr.CanToXYZ() || !tr.CanFromXYZ() {
+			t.Fatalf("CanToXYZ=%v CanFromXYZ=%v, want false/true", tr.CanToXYZ(), tr.CanFromXYZ())
+		}
+		// unsupported forward direction returns zero
+		if X, Y, Z := tr.ToXYZ([]float64{0.3, 0.4, 0.5}, &Workspace{}); X != 0 || Y != 0 || Z != 0 {
+			t.Errorf("ToXYZ on unsupported direction = %v,%v,%v, want 0,0,0", X, Y, Z)
+		}
+	})
+}
+
+func TestSingularMatrixReverseUnavailable(t *testing.T) {
+	xyzTag := func(x, y, z float64) []byte {
+		b := make([]byte, 20)
+		copy(b[:4], "XYZ ")
+		putS15Fixed16(b, 8, x)
+		putS15Fixed16(b, 12, y)
+		putS15Fixed16(b, 16, z)
+		return b
+	}
+	trc := (&Curve{Gamma: 2.2}).encodeCurveType()
+
+	// three identical columns => singular matrix => reverse unavailable
+	col := xyzTag(0.5, 0.5, 0.5)
+	p := &Profile{
+		ColorSpace: RGBSpace,
+		PCS:        PCSXYZSpace,
+		TagData: map[TagType][]byte{
+			RedMatrixColumn:   col,
+			GreenMatrixColumn: col,
+			BlueMatrixColumn:  col,
+			RedTRC:            trc,
+			GreenTRC:          trc,
+			BlueTRC:           trc,
+		},
+	}
+	tr, err := NewTransform(p, Perceptual)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !tr.CanToXYZ() {
+		t.Errorf("CanToXYZ = false, want true")
+	}
+	if tr.CanFromXYZ() {
+		t.Errorf("CanFromXYZ = true, want false (singular matrix)")
+	}
+	dst := []float64{-1, -2, -3}
+	tr.FromXYZ(0.3, 0.4, 0.5, dst, &Workspace{})
+	if dst[0] != -1 || dst[1] != -2 || dst[2] != -3 {
+		t.Errorf("FromXYZ wrote to dst with singular matrix: %v", dst)
+	}
+}
+
+// badLUTTag returns bytes with an unrecognised type signature, so DecodeLUT
+// fails even though detectProfileType keys on the tag's presence alone.
+func badLUTTag() []byte {
+	return []byte("junkjunk")
+}
+
+// A present-but-malformed preferred-intent tag must not mask a valid fallback
+// further along the chain.
+func TestDecodeLUTChainSkipsMalformedTag(t *testing.T) {
+	p := &Profile{
+		ColorSpace: RGBSpace,
+		PCS:        PCSXYZSpace,
+		TagData: map[TagType][]byte{
+			AToB0: badLUTTag(), // preferred (Perceptual), but corrupt
+			AToB1: mABTag(),    // valid fallback
+		},
+	}
+	tr, err := NewTransform(p, Perceptual)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// the empty fallback LUT passes the device values through unchanged, so a
+	// non-zero result proves the fallback was used rather than abandoned.
+	X, Y, Z := tr.ToXYZ([]float64{0.3, 0.4, 0.5}, &Workspace{})
+	if X == 0 && Y == 0 && Z == 0 {
+		t.Errorf("ToXYZ = 0,0,0; malformed AToB0 masked valid AToB1 fallback")
+	}
+}
+
+// When every present tag for a direction fails to decode, the direction yields
+// zero output rather than leaking PCS values into the device channels.
+func TestMalformedLUTYieldsZeroOutput(t *testing.T) {
+	t.Run("forward", func(t *testing.T) {
+		p := &Profile{
+			ColorSpace: RGBSpace,
+			PCS:        PCSXYZSpace,
+			TagData:    map[TagType][]byte{AToB0: badLUTTag()},
+		}
+		tr, err := NewTransform(p, Perceptual)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !tr.CanToXYZ() {
+			t.Fatal("CanToXYZ = false, want true (tag present)")
+		}
+		if X, Y, Z := tr.ToXYZ([]float64{0.3, 0.4, 0.5}, &Workspace{}); X != 0 || Y != 0 || Z != 0 {
+			t.Errorf("ToXYZ = %v,%v,%v, want 0,0,0", X, Y, Z)
+		}
+	})
+
+	t.Run("reverse", func(t *testing.T) {
+		p := &Profile{
+			ColorSpace: CMYKSpace, // 4 channels, to catch a stale trailing channel
+			PCS:        PCSXYZSpace,
+			TagData:    map[TagType][]byte{BToA0: badLUTTag()},
+		}
+		tr, err := NewTransform(p, Perceptual)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !tr.CanFromXYZ() {
+			t.Fatal("CanFromXYZ = false, want true (tag present)")
+		}
+		dst := []float64{1, 2, 3, 4}
+		tr.FromXYZ(0.3, 0.4, 0.5, dst, &Workspace{})
+		for i, v := range dst {
+			if v != 0 {
+				t.Errorf("dst[%d] = %v, want 0 (all device channels)", i, v)
+			}
+		}
+	})
+}
+
+// Gamma is encoded as a u8Fixed8Number (ICC.1:2022 §4.9): round to the nearest
+// 1/256 and clamp to the representable range [0, 255 + 255/256].
+func TestEncodeGammaRoundAndClamp(t *testing.T) {
+	tests := []struct {
+		name  string
+		gamma float64
+		want  uint16
+	}{
+		{"rounds up", 100.7 / 256.0, 101},  // 100.7 -> 101, not 100
+		{"common 2.2", 2.2, 563},           // 563.2 -> 563
+		{"clamps overflow", 300.0, 0xFFFF}, // 76800 saturates
+		{"clamps negative", -1.0, 0},       // below range saturates to 0
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			buf := (&Curve{Gamma: tc.gamma}).encodeCurveType()
+			if len(buf) != 14 {
+				t.Fatalf("encoded length = %d, want 14 (gamma curveType)", len(buf))
+			}
+			if got := getUint16(buf, 12); got != tc.want {
+				t.Errorf("encoded gamma = %d, want %d", got, tc.want)
 			}
 		})
 	}

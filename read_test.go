@@ -118,7 +118,13 @@ func testRoundTrip(t *testing.T, p *Profile) {
 		t.Fatalf("decode failed: %v", err)
 	}
 
-	// normalise checksum before comparison (encoding recalculates it)
+	// the ID's presence must survive the round trip: a profile without an ID
+	// stays without one, and a profile with an ID keeps an ID. (A stored ID
+	// that was invalid becomes valid, because Encode writes a correct one.)
+	if (p.CheckSum == CheckSumMissing) != (q.CheckSum == CheckSumMissing) {
+		t.Errorf("CheckSum presence changed across round trip: %v -> %v", p.CheckSum, q.CheckSum)
+	}
+	// normalise checksum before structural comparison (Encode recomputes it)
 	p.CheckSum = CheckSumMissing
 	q.CheckSum = CheckSumMissing
 
@@ -236,23 +242,23 @@ var curveTestCases = []curveTestCase{
 	{
 		// params encoded as s15Fixed16: 2.5 = 163840/65536
 		Name:  "parametric-type0",
-		Curve: &Curve{FuncType: 0, Params: []float64{2.5}},
+		Curve: &Curve{Params: []float64{2.5}},
 	},
 	{
 		Name:  "parametric-type1",
-		Curve: &Curve{FuncType: 1, Params: []float64{2.5, 1.0, 0.0}},
+		Curve: &Curve{Params: []float64{2.5, 1.0, 0.0}},
 	},
 	{
 		Name:  "parametric-type2",
-		Curve: &Curve{FuncType: 2, Params: []float64{2.5, 1.0, 0.0, 0.0}},
+		Curve: &Curve{Params: []float64{2.5, 1.0, 0.0, 0.0}},
 	},
 	{
 		Name:  "parametric-type3",
-		Curve: &Curve{FuncType: 3, Params: []float64{2.5, 1.0, 0.0, 0.5, 0.125}},
+		Curve: &Curve{Params: []float64{2.5, 1.0, 0.0, 0.5, 0.125}},
 	},
 	{
 		Name:  "parametric-type4",
-		Curve: &Curve{FuncType: 4, Params: []float64{2.5, 1.0, 0.0, 0.5, 0.125, 0.0, 0.0}},
+		Curve: &Curve{Params: []float64{2.5, 1.0, 0.0, 0.5, 0.125, 0.0, 0.0}},
 	},
 }
 

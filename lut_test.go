@@ -21,7 +21,7 @@ import (
 	"testing"
 )
 
-func TestDecodeLut8(t *testing.T) {
+func TestDecodeLUT8(t *testing.T) {
 	// build a minimal lut8Type (mft1) with identity mapping
 	inputChannels := 3
 	outputChannels := 3
@@ -78,9 +78,9 @@ func TestDecodeLut8(t *testing.T) {
 		}
 	}
 
-	lut, err := DecodeLut(data)
+	lut, err := DecodeLUT(data)
 	if err != nil {
-		t.Fatalf("DecodeLut failed: %v", err)
+		t.Fatalf("DecodeLUT failed: %v", err)
 	}
 
 	if lut.InputChannels() != inputChannels {
@@ -90,9 +90,9 @@ func TestDecodeLut8(t *testing.T) {
 		t.Errorf("OutputChannels = %d, want %d", lut.OutputChannels(), outputChannels)
 	}
 
-	lut8, ok := lut.(*Lut8)
+	lut8, ok := lut.(*LUT8)
 	if !ok {
-		t.Fatalf("expected *Lut8, got %T", lut)
+		t.Fatalf("expected *LUT8, got %T", lut)
 	}
 	if lut8.gridPoints != clutPoints {
 		t.Errorf("gridPoints = %d, want %d", lut8.gridPoints, clutPoints)
@@ -107,7 +107,8 @@ func TestDecodeLut8(t *testing.T) {
 	}
 
 	for _, input := range tests {
-		output := lut.Apply(input)
+		output := make([]float64, lut.OutputChannels())
+		lut.Apply(input, output, &Workspace{})
 		for i := range 3 {
 			if math.Abs(output[i]-input[i]) > 0.02 {
 				t.Errorf("Apply(%v) = %v, want ~%v", input, output, input)
@@ -117,7 +118,7 @@ func TestDecodeLut8(t *testing.T) {
 	}
 }
 
-func TestDecodeLut16(t *testing.T) {
+func TestDecodeLUT16(t *testing.T) {
 	// build a minimal lut16Type (mft2)
 	inputChannels := 3
 	outputChannels := 3
@@ -181,9 +182,9 @@ func TestDecodeLut16(t *testing.T) {
 		}
 	}
 
-	lut, err := DecodeLut(data)
+	lut, err := DecodeLUT(data)
 	if err != nil {
-		t.Fatalf("DecodeLut failed: %v", err)
+		t.Fatalf("DecodeLUT failed: %v", err)
 	}
 
 	if lut.InputChannels() != inputChannels {
@@ -192,7 +193,8 @@ func TestDecodeLut16(t *testing.T) {
 
 	// test identity
 	input := []float64{0.5, 0.5, 0.5}
-	output := lut.Apply(input)
+	output := make([]float64, lut.OutputChannels())
+	lut.Apply(input, output, &Workspace{})
 	for i := range 3 {
 		if math.Abs(output[i]-input[i]) > 0.02 {
 			t.Errorf("Apply(%v) = %v, want ~%v", input, output, input)
@@ -201,13 +203,13 @@ func TestDecodeLut16(t *testing.T) {
 	}
 }
 
-func TestLutAToBApplyWithMCurves(t *testing.T) {
-	// test that M curves are applied in the correct order for LutAToB
+func TestLUTAToBApplyWithMCurves(t *testing.T) {
+	// test that M curves are applied in the correct order for LUTAToB
 	// order: ACurves → CLUT → MCurves → Matrix → BCurves
-	lut := &LutAToB{
-		inputChannels:  3,
-		outputChannels: 3,
-		gridPoints:     []int{2, 2, 2},
+	lut := &LUTAToB{
+		nInput:     3,
+		nOutput:    3,
+		gridPoints: []int{2, 2, 2},
 		// identity input curves
 		aCurves: []*Curve{
 			{Gamma: 1.0},
@@ -244,7 +246,8 @@ func TestLutAToBApplyWithMCurves(t *testing.T) {
 
 	// input 0.5 should go through CLUT unchanged, then M curves apply gamma 2.0
 	input := []float64{0.5, 0.5, 0.5}
-	output := lut.Apply(input)
+	output := make([]float64, lut.OutputChannels())
+	lut.Apply(input, output, &Workspace{})
 
 	// expected: 0.5^2.0 = 0.25
 	expected := 0.25
@@ -255,7 +258,7 @@ func TestLutAToBApplyWithMCurves(t *testing.T) {
 	}
 }
 
-func TestDecodeLutInvalidData(t *testing.T) {
+func TestDecodeLUTInvalidData(t *testing.T) {
 	tests := []struct {
 		name string
 		data []byte
@@ -267,7 +270,7 @@ func TestDecodeLutInvalidData(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := DecodeLut(tt.data)
+			_, err := DecodeLUT(tt.data)
 			if err == nil {
 				t.Error("expected error, got nil")
 			}
@@ -294,9 +297,9 @@ func TestComputeCLUTSizeOverflow(t *testing.T) {
 
 func TestMatrix3x4Layout(t *testing.T) {
 	// test that 3x4 matrix layout matches ICC spec
-	lut := &LutAToB{
-		inputChannels:  3,
-		outputChannels: 3,
+	lut := &LUTAToB{
+		nInput:  3,
+		nOutput: 3,
 		// matrix that scales by 2 and adds offset (0.1, 0.2, 0.3)
 		matrix: []float64{
 			2, 0, 0, // row 1
@@ -307,7 +310,8 @@ func TestMatrix3x4Layout(t *testing.T) {
 	}
 
 	input := []float64{0.1, 0.2, 0.3}
-	output := lut.Apply(input)
+	output := make([]float64, lut.OutputChannels())
+	lut.Apply(input, output, &Workspace{})
 
 	// expected: 2*input + offset
 	expected := []float64{0.1*2 + 0.1, 0.2*2 + 0.2, 0.3*2 + 0.3}
@@ -320,9 +324,9 @@ func TestMatrix3x4Layout(t *testing.T) {
 
 func TestMatrix3x4Identity(t *testing.T) {
 	// verify identity matrix produces identity output
-	lut := &LutAToB{
-		inputChannels:  3,
-		outputChannels: 3,
+	lut := &LUTAToB{
+		nInput:  3,
+		nOutput: 3,
 		matrix: []float64{
 			1, 0, 0,
 			0, 1, 0,
@@ -332,7 +336,8 @@ func TestMatrix3x4Identity(t *testing.T) {
 	}
 
 	input := []float64{0.25, 0.5, 0.75}
-	output := lut.Apply(input)
+	output := make([]float64, lut.OutputChannels())
+	lut.Apply(input, output, &Workspace{})
 
 	for i := range 3 {
 		if math.Abs(output[i]-input[i]) > 1e-6 {
@@ -341,8 +346,8 @@ func TestMatrix3x4Identity(t *testing.T) {
 	}
 }
 
-func TestLutAToBOrder(t *testing.T) {
-	// test LutAToB processing order: ACurves → CLUT → MCurves → Matrix → BCurves
+func TestLUTAToBOrder(t *testing.T) {
+	// test LUTAToB processing order: ACurves → CLUT → MCurves → Matrix → BCurves
 	buildIdentityCLUT := func() []float64 {
 		clut := make([]float64, 2*2*2*3)
 		for r := range 2 {
@@ -359,11 +364,11 @@ func TestLutAToBOrder(t *testing.T) {
 	}
 
 	// LUT with MCurves (gamma 0.5 = sqrt) and Matrix that doubles values
-	lut := &LutAToB{
-		inputChannels:  3,
-		outputChannels: 3,
-		gridPoints:     []int{2, 2, 2},
-		clut:           buildIdentityCLUT(),
+	lut := &LUTAToB{
+		nInput:     3,
+		nOutput:    3,
+		gridPoints: []int{2, 2, 2},
+		clut:       buildIdentityCLUT(),
 		mCurves: []*Curve{
 			{Gamma: 0.5}, // sqrt
 			{Gamma: 0.5},
@@ -380,7 +385,8 @@ func TestLutAToBOrder(t *testing.T) {
 	input := []float64{0.25, 0.25, 0.25}
 
 	// mAB order: 0.25 → CLUT(identity) → MCurves(sqrt=0.5) → Matrix(*2) = 1.0
-	output := lut.Apply(input)
+	output := make([]float64, lut.OutputChannels())
+	lut.Apply(input, output, &Workspace{})
 
 	expectedAB := 1.0
 	for i := range 3 {
@@ -390,8 +396,8 @@ func TestLutAToBOrder(t *testing.T) {
 	}
 }
 
-func TestLutBToAOrder(t *testing.T) {
-	// test LutBToA processing order: BCurves → Matrix → MCurves → CLUT → ACurves
+func TestLUTBToAOrder(t *testing.T) {
+	// test LUTBToA processing order: BCurves → Matrix → MCurves → CLUT → ACurves
 	buildIdentityCLUT := func() []float64 {
 		clut := make([]float64, 2*2*2*3)
 		for r := range 2 {
@@ -408,11 +414,11 @@ func TestLutBToAOrder(t *testing.T) {
 	}
 
 	// LUT with MCurves (gamma 0.5 = sqrt) and Matrix that doubles values
-	lut := &LutBToA{
-		inputChannels:  3,
-		outputChannels: 3,
-		gridPoints:     []int{2, 2, 2},
-		clut:           buildIdentityCLUT(),
+	lut := &LUTBToA{
+		nInput:     3,
+		nOutput:    3,
+		gridPoints: []int{2, 2, 2},
+		clut:       buildIdentityCLUT(),
 		mCurves: []*Curve{
 			{Gamma: 0.5}, // sqrt
 			{Gamma: 0.5},
@@ -429,7 +435,8 @@ func TestLutBToAOrder(t *testing.T) {
 	input := []float64{0.25, 0.25, 0.25}
 
 	// mBA order: 0.25 → Matrix(*2=0.5) → MCurves(sqrt≈0.707) → CLUT(identity) ≈ 0.707
-	output := lut.Apply(input)
+	output := make([]float64, lut.OutputChannels())
+	lut.Apply(input, output, &Workspace{})
 
 	expectedBA := math.Sqrt(0.5)
 	for i := range 3 {
@@ -439,8 +446,8 @@ func TestLutBToAOrder(t *testing.T) {
 	}
 }
 
-func TestLutAToBVsLutBToADifferentOrder(t *testing.T) {
-	// verify that LutAToB and LutBToA produce different results
+func TestLUTAToBVsLUTBToADifferentOrder(t *testing.T) {
+	// verify that LUTAToB and LUTBToA produce different results
 	// with the same components, proving different processing order
 	buildIdentityCLUT := func() []float64 {
 		clut := make([]float64, 2*2*2*3)
@@ -469,28 +476,30 @@ func TestLutAToBVsLutBToADifferentOrder(t *testing.T) {
 		0, 0, 0,
 	}
 
-	lutAToB := &LutAToB{
-		inputChannels:  3,
-		outputChannels: 3,
-		gridPoints:     []int{2, 2, 2},
-		clut:           buildIdentityCLUT(),
-		mCurves:        mCurves,
-		matrix:         matrix,
+	lutAToB := &LUTAToB{
+		nInput:     3,
+		nOutput:    3,
+		gridPoints: []int{2, 2, 2},
+		clut:       buildIdentityCLUT(),
+		mCurves:    mCurves,
+		matrix:     matrix,
 	}
 
-	lutBToA := &LutBToA{
-		inputChannels:  3,
-		outputChannels: 3,
-		gridPoints:     []int{2, 2, 2},
-		clut:           buildIdentityCLUT(),
-		mCurves:        mCurves,
-		matrix:         matrix,
+	lutBToA := &LUTBToA{
+		nInput:     3,
+		nOutput:    3,
+		gridPoints: []int{2, 2, 2},
+		clut:       buildIdentityCLUT(),
+		mCurves:    mCurves,
+		matrix:     matrix,
 	}
 
 	input := []float64{0.25, 0.25, 0.25}
 
-	outputAB := lutAToB.Apply(input)
-	outputBA := lutBToA.Apply(input)
+	outputAB := make([]float64, lutAToB.OutputChannels())
+	lutAToB.Apply(input, outputAB, &Workspace{})
+	outputBA := make([]float64, lutBToA.OutputChannels())
+	lutBToA.Apply(input, outputBA, &Workspace{})
 
 	// verify they produce different results
 	if math.Abs(outputAB[0]-outputBA[0]) < 0.1 {
@@ -518,47 +527,47 @@ func buildIdentityCLUT3D(gridPoints int, outputChannels int) []float64 {
 
 type lutTestCase struct {
 	Name string
-	Lut  Lut
+	LUT  LUT
 }
 
 var lutTestCases = []lutTestCase{
 	{
 		Name: "minimal-mAB",
-		Lut: &LutAToB{
-			inputChannels:  3,
-			outputChannels: 3,
+		LUT: &LUTAToB{
+			nInput:  3,
+			nOutput: 3,
 		},
 	},
 	{
 		Name: "minimal-mBA",
-		Lut: &LutBToA{
-			inputChannels:  3,
-			outputChannels: 3,
+		LUT: &LUTBToA{
+			nInput:  3,
+			nOutput: 3,
 		},
 	},
 	{
 		Name: "with-clut-mAB",
-		Lut: &LutAToB{
-			inputChannels:  3,
-			outputChannels: 3,
-			gridPoints:     []int{2, 2, 2},
-			clut:           buildIdentityCLUT3D(2, 3),
+		LUT: &LUTAToB{
+			nInput:     3,
+			nOutput:    3,
+			gridPoints: []int{2, 2, 2},
+			clut:       buildIdentityCLUT3D(2, 3),
 		},
 	},
 	{
 		Name: "with-clut-mBA",
-		Lut: &LutBToA{
-			inputChannels:  3,
-			outputChannels: 3,
-			gridPoints:     []int{2, 2, 2},
-			clut:           buildIdentityCLUT3D(2, 3),
+		LUT: &LUTBToA{
+			nInput:     3,
+			nOutput:    3,
+			gridPoints: []int{2, 2, 2},
+			clut:       buildIdentityCLUT3D(2, 3),
 		},
 	},
 	{
 		Name: "with-curves-mAB",
-		Lut: &LutAToB{
-			inputChannels:  3,
-			outputChannels: 3,
+		LUT: &LUTAToB{
+			nInput:  3,
+			nOutput: 3,
 			aCurves: []*Curve{
 				{Gamma: 2.2},
 				{Gamma: 2.2},
@@ -573,9 +582,9 @@ var lutTestCases = []lutTestCase{
 	},
 	{
 		Name: "with-curves-mBA",
-		Lut: &LutBToA{
-			inputChannels:  3,
-			outputChannels: 3,
+		LUT: &LUTBToA{
+			nInput:  3,
+			nOutput: 3,
 			bCurves: []*Curve{
 				{Gamma: 2.2},
 				{Gamma: 2.2},
@@ -590,9 +599,9 @@ var lutTestCases = []lutTestCase{
 	},
 	{
 		Name: "with-matrix-mAB",
-		Lut: &LutAToB{
-			inputChannels:  3,
-			outputChannels: 3,
+		LUT: &LUTAToB{
+			nInput:  3,
+			nOutput: 3,
 			matrix: []float64{
 				1.0, 0.0, 0.0,
 				0.0, 1.0, 0.0,
@@ -603,11 +612,11 @@ var lutTestCases = []lutTestCase{
 	},
 	{
 		Name: "with-mcurves-mAB",
-		Lut: &LutAToB{
-			inputChannels:  3,
-			outputChannels: 3,
-			gridPoints:     []int{2, 2, 2},
-			clut:           buildIdentityCLUT3D(2, 3),
+		LUT: &LUTAToB{
+			nInput:     3,
+			nOutput:    3,
+			gridPoints: []int{2, 2, 2},
+			clut:       buildIdentityCLUT3D(2, 3),
 			mCurves: []*Curve{
 				{Gamma: 2.0},
 				{Gamma: 2.0},
@@ -617,10 +626,10 @@ var lutTestCases = []lutTestCase{
 	},
 	{
 		Name: "full-mAB",
-		Lut: &LutAToB{
-			inputChannels:  3,
-			outputChannels: 3,
-			gridPoints:     []int{3, 3, 3},
+		LUT: &LUTAToB{
+			nInput:     3,
+			nOutput:    3,
+			gridPoints: []int{3, 3, 3},
 			aCurves: []*Curve{
 				{Gamma: 2.2},
 				{Gamma: 2.2},
@@ -647,10 +656,10 @@ var lutTestCases = []lutTestCase{
 	},
 	{
 		Name: "full-mBA",
-		Lut: &LutBToA{
-			inputChannels:  3,
-			outputChannels: 3,
-			gridPoints:     []int{3, 3, 3},
+		LUT: &LUTBToA{
+			nInput:     3,
+			nOutput:    3,
+			gridPoints: []int{3, 3, 3},
 			bCurves: []*Curve{
 				{Gamma: 2.2},
 				{Gamma: 2.2},
@@ -677,7 +686,7 @@ var lutTestCases = []lutTestCase{
 	},
 }
 
-func testLutRoundTrip(t *testing.T, lut Lut) {
+func testLUTRoundTrip(t *testing.T, lut LUT) {
 	t.Helper()
 
 	// encode
@@ -687,7 +696,7 @@ func testLutRoundTrip(t *testing.T, lut Lut) {
 	}
 
 	// decode
-	decoded, err := DecodeLut(data)
+	decoded, err := DecodeLUT(data)
 	if err != nil {
 		t.Fatalf("decode failed: %v", err)
 	}
@@ -709,8 +718,10 @@ func testLutRoundTrip(t *testing.T, lut Lut) {
 	}
 
 	for _, input := range testInputs {
-		output1 := lut.Apply(input)
-		output2 := decoded.Apply(input)
+		output1 := make([]float64, lut.OutputChannels())
+		lut.Apply(input, output1, &Workspace{})
+		output2 := make([]float64, decoded.OutputChannels())
+		decoded.Apply(input, output2, &Workspace{})
 
 		for i := range output1 {
 			// allow small tolerance for fixed-point encoding precision
@@ -722,18 +733,18 @@ func testLutRoundTrip(t *testing.T, lut Lut) {
 	}
 }
 
-func TestLutRoundTrip(t *testing.T) {
+func TestLUTRoundTrip(t *testing.T) {
 	for _, tc := range lutTestCases {
 		t.Run(tc.Name, func(t *testing.T) {
-			testLutRoundTrip(t, tc.Lut)
+			testLUTRoundTrip(t, tc.LUT)
 		})
 	}
 }
 
-func FuzzLutRoundTrip(f *testing.F) {
+func FuzzLUTRoundTrip(f *testing.F) {
 	// seed corpus with test cases
 	for _, tc := range lutTestCases {
-		data, err := tc.Lut.Encode()
+		data, err := tc.LUT.Encode()
 		if err != nil {
 			continue
 		}
@@ -741,7 +752,7 @@ func FuzzLutRoundTrip(f *testing.F) {
 	}
 
 	f.Fuzz(func(t *testing.T, data []byte) {
-		lut, err := DecodeLut(data)
+		lut, err := DecodeLUT(data)
 		if err != nil {
 			t.Skip("invalid LUT data")
 		}
@@ -752,7 +763,7 @@ func FuzzLutRoundTrip(f *testing.F) {
 			t.Fatalf("encode failed: %v", err)
 		}
 
-		decoded, err := DecodeLut(encoded)
+		decoded, err := DecodeLUT(encoded)
 		if err != nil {
 			t.Fatalf("decode failed: %v", err)
 		}
@@ -771,8 +782,10 @@ func FuzzLutRoundTrip(f *testing.F) {
 			if len(input) != lut.InputChannels() {
 				continue
 			}
-			output1 := lut.Apply(input)
-			output2 := decoded.Apply(input)
+			output1 := make([]float64, lut.OutputChannels())
+			lut.Apply(input, output1, &Workspace{})
+			output2 := make([]float64, decoded.OutputChannels())
+			decoded.Apply(input, output2, &Workspace{})
 
 			for i := range output1 {
 				if math.Abs(output1[i]-output2[i]) > 0.01 {

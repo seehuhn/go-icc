@@ -22,21 +22,17 @@ import (
 	"seehuhn.de/go/membudget"
 )
 
-// Lut represents a colour lookup table from an ICC profile.
-// The four concrete implementations are [Lut8], [Lut16], [LutAToB], and [LutBToA].
-type Lut interface {
-	// Apply transforms input values through the LUT.
-	// Input values should be normalised to [0, 1].
-	Apply(input []float64) []float64
+// LUT represents a colour lookup table from an ICC profile.
+// The four concrete implementations are [LUT8], [LUT16], [LUTAToB], and
+// [LUTBToA].
+type LUT interface {
+	// Apply transforms input through the LUT, writing OutputChannels()
+	// values into dst. Input values should be normalised to [0, 1] and the
+	// dst slice must have length >= OutputChannels(). The Workspace argument
+	// is used as scratch space.
+	Apply(input, dst []float64, ws *Workspace)
 
-	// ApplyInto transforms input through the LUT, writing OutputChannels()
-	// values into dst. The dst slice must have length >= OutputChannels().
-	// It is the allocation-free form of Apply: pass a non-nil ws to reuse
-	// scratch buffers across calls, or nil to allocate internally. A Workspace
-	// must not be used from more than one goroutine at a time.
-	ApplyInto(input, dst []float64, ws *Workspace)
-
-	// Encode converts the LUT to ICC tag data in its native format.
+	// Encode converts the LUT to binary ICC tag data.
 	Encode() ([]byte, error)
 
 	// InputChannels returns the number of input channels.
@@ -46,10 +42,9 @@ type Lut interface {
 	OutputChannels() int
 }
 
-// DecodeLut decodes a Lut from ICC tag data.
+// DecodeLUT decodes a LUT from ICC tag data.
 // This is used for AToB0, AToB1, AToB2, BToA0, BToA1, and BToA2 tags.
-// Supported types: [Lut8] (mft1), [Lut16] (mft2), [LutAToB] (mAB), [LutBToA] (mBA).
-func DecodeLut(data []byte) (Lut, error) {
+func DecodeLUT(data []byte) (LUT, error) {
 	if len(data) < 8 {
 		return nil, errInvalidTagData
 	}
@@ -58,71 +53,64 @@ func DecodeLut(data []byte) (Lut, error) {
 	typeID := string(data[0:4])
 	switch typeID {
 	case "mft1":
-		return decodeLut8(b, data)
+		return decodeLUT8(b, data)
 	case "mft2":
-		return decodeLut16(b, data)
+		return decodeLUT16(b, data)
 	case "mAB ":
-		return decodeLutAToB(b, data)
+		return decodeLUTAToB(b, data)
 	case "mBA ":
-		return decodeLutBToA(b, data)
+		return decodeLUTBToA(b, data)
 	default:
 		return nil, errUnexpectedType
 	}
 }
 
 // ----------------------------------------------------------------------------
-// Lut8 - lut8Type (mft1)
+// LUT8 - lut8Type (mft1)
 // ----------------------------------------------------------------------------
 
-// Lut8 represents an 8-bit LUT (lut8Type, tag signature "mft1").
+// LUT8 represents an 8-bit LUT (lut8Type, tag signature "mft1").
 // Processing order: Matrix → InputCurves → CLUT → OutputCurves
-type Lut8 struct {
-	inputChannels  int
-	outputChannels int
-	gridPoints     int       // same for all dimensions
-	matrix         []float64 // 3×3, nil if identity
-	inputCurves    []*Curve  // one per input channel
-	clut           []float64 // flattened n-dimensional table, normalised [0,1]
-	outputCurves   []*Curve  // one per output channel
+type LUT8 struct {
+	nInput     int
+	nOutput    int
+	gridPoints int // same for all dimensions
+
+	matrix       []float64 // 3×3, nil if identity
+	inputCurves  []*Curve  // one per input channel
+	clut         []float64 // flattened n-dimensional table, normalised [0,1]
+	outputCurves []*Curve  // one per output channel
 }
 
-func (l *Lut8) InputChannels() int  { return l.inputChannels }
-func (l *Lut8) OutputChannels() int { return l.outputChannels }
+func (l *LUT8) InputChannels() int  { return l.nInput }
+func (l *LUT8) OutputChannels() int { return l.nOutput }
 
-// Apply transforms input values through the LUT.
-// Processing order: Matrix → InputCurves → CLUT → OutputCurves
-func (l *Lut8) Apply(input []float64) []float64 {
-	dst := make([]float64, l.outputChannels)
-	l.ApplyInto(input, dst, nil)
-	return dst
-}
-
-// ApplyInto implements the [Lut] interface.
-func (l *Lut8) ApplyInto(input, dst []float64, ws *Workspace) {
-	if len(input) != l.inputChannels {
-		zeroFloats(dst[:l.outputChannels])
+// Apply implements the [LUT] interface.
+func (l *LUT8) Apply(input, dst []float64, ws *Workspace) {
+	if len(input) != l.nInput {
+		zeroFloats(dst[:l.nOutput])
 		return
 	}
-	v := ws.values(l.inputChannels)
+	v := ws.values(l.nInput)
 	copy(v, input)
 	applyMatrix3x3InPlace(l.matrix, v)
 	applyCurves(l.inputCurves, v)
-	clutScalarGridInto(l.clut, l.gridPoints, l.inputChannels, l.outputChannels, v, dst, ws)
-	applyCurves(l.outputCurves, dst[:l.outputChannels])
-	clampInto(dst[:l.outputChannels])
+	clutScalarGridInto(l.clut, l.gridPoints, l.nInput, l.nOutput, v, dst, ws)
+	applyCurves(l.outputCurves, dst[:l.nOutput])
+	clampInto(dst[:l.nOutput])
 }
 
 // Encode converts the LUT to lut8Type (mft1) format.
-func (l *Lut8) Encode() ([]byte, error) {
-	inputTableSize := 256 * l.inputChannels
-	clutSize := computeCLUTSizeUniform(l.gridPoints, l.inputChannels, l.outputChannels)
-	outputTableSize := 256 * l.outputChannels
+func (l *LUT8) Encode() ([]byte, error) {
+	inputTableSize := 256 * l.nInput
+	clutSize := computeCLUTSizeUniform(l.gridPoints, l.nInput, l.nOutput)
+	outputTableSize := 256 * l.nOutput
 	totalSize := 48 + inputTableSize + clutSize + outputTableSize
 
 	buf := make([]byte, totalSize)
 	copy(buf[0:4], "mft1")
-	buf[8] = byte(l.inputChannels)
-	buf[9] = byte(l.outputChannels)
+	buf[8] = byte(l.nInput)
+	buf[9] = byte(l.nOutput)
 	buf[10] = byte(l.gridPoints)
 
 	// write matrix (identity if nil)
@@ -136,7 +124,7 @@ func (l *Lut8) Encode() ([]byte, error) {
 
 	// write input tables (256 entries per channel, 8-bit)
 	offset := 48
-	for ch := range l.inputChannels {
+	for ch := range l.nInput {
 		var curve *Curve
 		if ch < len(l.inputCurves) {
 			curve = l.inputCurves[ch]
@@ -158,7 +146,7 @@ func (l *Lut8) Encode() ([]byte, error) {
 	offset += clutSize
 
 	// write output tables (256 entries per channel, 8-bit)
-	for ch := range l.outputChannels {
+	for ch := range l.nOutput {
 		var curve *Curve
 		if ch < len(l.outputCurves) {
 			curve = l.outputCurves[ch]
@@ -175,7 +163,7 @@ func (l *Lut8) Encode() ([]byte, error) {
 	return buf, nil
 }
 
-func decodeLut8(b *membudget.Budget, data []byte) (*Lut8, error) {
+func decodeLUT8(b *membudget.Budget, data []byte) (*LUT8, error) {
 	if len(data) < 48 {
 		return nil, errInvalidTagData
 	}
@@ -267,63 +255,56 @@ func decodeLut8(b *membudget.Budget, data []byte) (*Lut8, error) {
 		outputCurves[ch] = &Curve{Table: table}
 	}
 
-	return &Lut8{
-		inputChannels:  inputChannels,
-		outputChannels: outputChannels,
-		gridPoints:     clutPoints,
-		matrix:         matrix,
-		inputCurves:    inputCurves,
-		clut:           clut,
-		outputCurves:   outputCurves,
+	return &LUT8{
+		nInput:       inputChannels,
+		nOutput:      outputChannels,
+		gridPoints:   clutPoints,
+		matrix:       matrix,
+		inputCurves:  inputCurves,
+		clut:         clut,
+		outputCurves: outputCurves,
 	}, nil
 }
 
 // ----------------------------------------------------------------------------
-// Lut16 - lut16Type (mft2)
+// LUT16 - lut16Type (mft2)
 // ----------------------------------------------------------------------------
 
-// Lut16 represents a 16-bit LUT (lut16Type, tag signature "mft2").
+// LUT16 represents a 16-bit LUT (lut16Type, tag signature "mft2").
 // Processing order: Matrix → InputCurves → CLUT → OutputCurves
-type Lut16 struct {
-	inputChannels   int
-	outputChannels  int
-	gridPoints      int       // same for all dimensions
+type LUT16 struct {
+	nInput     int
+	nOutput    int
+	gridPoints int // same for all dimensions
+
 	matrix          []float64 // 3×3, nil if identity
 	inputTableSize  int       // entries per input curve
-	outputTableSize int       // entries per output curve
 	inputCurves     []*Curve  // one per input channel
 	clut            []float64 // flattened n-dimensional table, normalised [0,1]
+	outputTableSize int       // entries per output curve
 	outputCurves    []*Curve  // one per output channel
 }
 
-func (l *Lut16) InputChannels() int  { return l.inputChannels }
-func (l *Lut16) OutputChannels() int { return l.outputChannels }
+func (l *LUT16) InputChannels() int  { return l.nInput }
+func (l *LUT16) OutputChannels() int { return l.nOutput }
 
-// Apply transforms input values through the LUT.
-// Processing order: Matrix → InputCurves → CLUT → OutputCurves
-func (l *Lut16) Apply(input []float64) []float64 {
-	dst := make([]float64, l.outputChannels)
-	l.ApplyInto(input, dst, nil)
-	return dst
-}
-
-// ApplyInto implements the [Lut] interface.
-func (l *Lut16) ApplyInto(input, dst []float64, ws *Workspace) {
-	if len(input) != l.inputChannels {
-		zeroFloats(dst[:l.outputChannels])
+// Apply implements the [LUT] interface.
+func (l *LUT16) Apply(input, dst []float64, ws *Workspace) {
+	if len(input) != l.nInput {
+		zeroFloats(dst[:l.nOutput])
 		return
 	}
-	v := ws.values(l.inputChannels)
+	v := ws.values(l.nInput)
 	copy(v, input)
 	applyMatrix3x3InPlace(l.matrix, v)
 	applyCurves(l.inputCurves, v)
-	clutScalarGridInto(l.clut, l.gridPoints, l.inputChannels, l.outputChannels, v, dst, ws)
-	applyCurves(l.outputCurves, dst[:l.outputChannels])
-	clampInto(dst[:l.outputChannels])
+	clutScalarGridInto(l.clut, l.gridPoints, l.nInput, l.nOutput, v, dst, ws)
+	applyCurves(l.outputCurves, dst[:l.nOutput])
+	clampInto(dst[:l.nOutput])
 }
 
 // Encode converts the LUT to lut16Type (mft2) format.
-func (l *Lut16) Encode() ([]byte, error) {
+func (l *LUT16) Encode() ([]byte, error) {
 	inputTableEntries := l.inputTableSize
 	if inputTableEntries == 0 {
 		inputTableEntries = 256
@@ -333,15 +314,15 @@ func (l *Lut16) Encode() ([]byte, error) {
 		outputTableEntries = 256
 	}
 
-	inputTableBytes := inputTableEntries * l.inputChannels * 2
-	clutSize := computeCLUTSizeUniform(l.gridPoints, l.inputChannels, l.outputChannels)
-	outputTableBytes := outputTableEntries * l.outputChannels * 2
+	inputTableBytes := inputTableEntries * l.nInput * 2
+	clutSize := computeCLUTSizeUniform(l.gridPoints, l.nInput, l.nOutput)
+	outputTableBytes := outputTableEntries * l.nOutput * 2
 	totalSize := 52 + inputTableBytes + clutSize*2 + outputTableBytes
 
 	buf := make([]byte, totalSize)
 	copy(buf[0:4], "mft2")
-	buf[8] = byte(l.inputChannels)
-	buf[9] = byte(l.outputChannels)
+	buf[8] = byte(l.nInput)
+	buf[9] = byte(l.nOutput)
 	buf[10] = byte(l.gridPoints)
 	putUint16(buf, 48, uint16(inputTableEntries))
 	putUint16(buf, 50, uint16(outputTableEntries))
@@ -357,7 +338,7 @@ func (l *Lut16) Encode() ([]byte, error) {
 
 	// write input tables (16-bit)
 	offset := 52
-	for ch := range l.inputChannels {
+	for ch := range l.nInput {
 		var curve *Curve
 		if ch < len(l.inputCurves) {
 			curve = l.inputCurves[ch]
@@ -379,7 +360,7 @@ func (l *Lut16) Encode() ([]byte, error) {
 	offset += clutSize * 2
 
 	// write output tables (16-bit)
-	for ch := range l.outputChannels {
+	for ch := range l.nOutput {
 		var curve *Curve
 		if ch < len(l.outputCurves) {
 			curve = l.outputCurves[ch]
@@ -396,7 +377,7 @@ func (l *Lut16) Encode() ([]byte, error) {
 	return buf, nil
 }
 
-func decodeLut16(b *membudget.Budget, data []byte) (*Lut16, error) {
+func decodeLUT16(b *membudget.Budget, data []byte) (*LUT16, error) {
 	if len(data) < 52 {
 		return nil, errInvalidTagData
 	}
@@ -487,9 +468,9 @@ func decodeLut16(b *membudget.Budget, data []byte) (*Lut16, error) {
 		outputCurves[ch] = &Curve{Table: table}
 	}
 
-	return &Lut16{
-		inputChannels:   inputChannels,
-		outputChannels:  outputChannels,
+	return &LUT16{
+		nInput:          inputChannels,
+		nOutput:         outputChannels,
 		gridPoints:      clutPoints,
 		matrix:          matrix,
 		inputTableSize:  inputTableEntries,
@@ -501,56 +482,49 @@ func decodeLut16(b *membudget.Budget, data []byte) (*Lut16, error) {
 }
 
 // ----------------------------------------------------------------------------
-// LutAToB - lutAtoBType (mAB)
+// LUTAToB - lutAtoBType (mAB)
 // ----------------------------------------------------------------------------
 
-// LutAToB represents an A-to-B LUT (lutAtoBType, tag signature "mAB ").
+// LUTAToB represents an A-to-B LUT (lutAtoBType, tag signature "mAB ").
 // Processing order: ACurves → CLUT → MCurves → Matrix → BCurves
-type LutAToB struct {
-	inputChannels  int
-	outputChannels int
-	aCurves        []*Curve  // input curves (one per input channel)
-	gridPoints     []int     // grid size per dimension
-	clut           []float64 // flattened n-dimensional table, normalised [0,1]
-	clutPrecision  int       // 1 for 8-bit, 2 for 16-bit (default 2)
-	mCurves        []*Curve  // curves between CLUT and matrix
-	matrix         []float64 // 3×4, nil if identity
-	bCurves        []*Curve  // output curves (one per output channel)
+type LUTAToB struct {
+	nInput     int
+	nOutput    int
+	gridPoints []int // grid size per dimension
+
+	aCurves       []*Curve  // input curves (one per input channel)
+	clutPrecision int       // 1 for 8-bit, 2 for 16-bit (default 2)
+	clut          []float64 // flattened n-dimensional table, normalised [0,1]
+	mCurves       []*Curve  // curves between CLUT and matrix
+	matrix        []float64 // 3×4, nil if identity
+	bCurves       []*Curve  // output curves (one per output channel)
 }
 
-func (l *LutAToB) InputChannels() int  { return l.inputChannels }
-func (l *LutAToB) OutputChannels() int { return l.outputChannels }
+func (l *LUTAToB) InputChannels() int  { return l.nInput }
+func (l *LUTAToB) OutputChannels() int { return l.nOutput }
 
-// Apply transforms input values through the LUT.
-// Processing order: ACurves → CLUT → MCurves → Matrix → BCurves
-func (l *LutAToB) Apply(input []float64) []float64 {
-	dst := make([]float64, l.outputChannels)
-	l.ApplyInto(input, dst, nil)
-	return dst
-}
-
-// ApplyInto implements the [Lut] interface.
-func (l *LutAToB) ApplyInto(input, dst []float64, ws *Workspace) {
-	if len(input) != l.inputChannels {
-		zeroFloats(dst[:l.outputChannels])
+// Apply implements the [LUT] interface.
+func (l *LUTAToB) Apply(input, dst []float64, ws *Workspace) {
+	if len(input) != l.nInput {
+		zeroFloats(dst[:l.nOutput])
 		return
 	}
-	v := ws.values(l.inputChannels)
+	v := ws.values(l.nInput)
 	copy(v, input)
 	applyCurves(l.aCurves, v)
-	clutGridInto(l.clut, l.gridPoints, l.outputChannels, v, dst, ws)
-	applyCurves(l.mCurves, dst[:l.outputChannels])
-	applyMatrix3x4InPlace(l.matrix, dst[:l.outputChannels])
-	applyCurves(l.bCurves, dst[:l.outputChannels])
-	clampInto(dst[:l.outputChannels])
+	clutGridInto(l.clut, l.gridPoints, l.nOutput, v, dst, ws)
+	applyCurves(l.mCurves, dst[:l.nOutput])
+	applyMatrix3x4InPlace(l.matrix, dst[:l.nOutput])
+	applyCurves(l.bCurves, dst[:l.nOutput])
+	clampInto(dst[:l.nOutput])
 }
 
 // Encode converts the LUT to lutAtoBType (mAB) format.
-func (l *LutAToB) Encode() ([]byte, error) {
-	return encodeLutAB(l.inputChannels, l.outputChannels, l.aCurves, l.gridPoints, l.clut, l.clutPrecision, l.mCurves, l.matrix, l.bCurves, false)
+func (l *LUTAToB) Encode() ([]byte, error) {
+	return encodeLUTAB(l.nInput, l.nOutput, l.aCurves, l.gridPoints, l.clut, l.clutPrecision, l.mCurves, l.matrix, l.bCurves, false)
 }
 
-func decodeLutAToB(b *membudget.Budget, data []byte) (*LutAToB, error) {
+func decodeLUTAToB(b *membudget.Budget, data []byte) (*LUTAToB, error) {
 	if len(data) < 32 {
 		return nil, errInvalidTagData
 	}
@@ -568,9 +542,9 @@ func decodeLutAToB(b *membudget.Budget, data []byte) (*LutAToB, error) {
 	clutOffset := getUint32(data, 24)
 	aCurveOffset := getUint32(data, 28)
 
-	lut := &LutAToB{
-		inputChannels:  inputChannels,
-		outputChannels: outputChannels,
+	lut := &LUTAToB{
+		nInput:  inputChannels,
+		nOutput: outputChannels,
 	}
 
 	// decode B curves (output curves for mAB)
@@ -626,56 +600,49 @@ func decodeLutAToB(b *membudget.Budget, data []byte) (*LutAToB, error) {
 }
 
 // ----------------------------------------------------------------------------
-// LutBToA - lutBtoAType (mBA)
+// LUTBToA - lutBtoAType (mBA)
 // ----------------------------------------------------------------------------
 
-// LutBToA represents a B-to-A LUT (lutBtoAType, tag signature "mBA ").
+// LUTBToA represents a B-to-A LUT (lutBtoAType, tag signature "mBA ").
 // Processing order: BCurves → Matrix → MCurves → CLUT → ACurves
-type LutBToA struct {
-	inputChannels  int
-	outputChannels int
-	bCurves        []*Curve  // input curves (one per input channel)
-	matrix         []float64 // 3×4, nil if identity
-	mCurves        []*Curve  // curves between matrix and CLUT
-	gridPoints     []int     // grid size per dimension
-	clut           []float64 // flattened n-dimensional table, normalised [0,1]
-	clutPrecision  int       // 1 for 8-bit, 2 for 16-bit (default 2)
-	aCurves        []*Curve  // output curves (one per output channel)
+type LUTBToA struct {
+	nInput     int
+	nOutput    int
+	gridPoints []int // grid size per dimension
+
+	bCurves       []*Curve  // input curves (one per input channel)
+	matrix        []float64 // 3×4, nil if identity
+	mCurves       []*Curve  // curves between matrix and CLUT
+	clutPrecision int       // 1 for 8-bit, 2 for 16-bit (default 2)
+	clut          []float64 // flattened n-dimensional table, normalised [0,1]
+	aCurves       []*Curve  // output curves (one per output channel)
 }
 
-func (l *LutBToA) InputChannels() int  { return l.inputChannels }
-func (l *LutBToA) OutputChannels() int { return l.outputChannels }
+func (l *LUTBToA) InputChannels() int  { return l.nInput }
+func (l *LUTBToA) OutputChannels() int { return l.nOutput }
 
-// Apply transforms input values through the LUT.
-// Processing order: BCurves → Matrix → MCurves → CLUT → ACurves
-func (l *LutBToA) Apply(input []float64) []float64 {
-	dst := make([]float64, l.outputChannels)
-	l.ApplyInto(input, dst, nil)
-	return dst
-}
-
-// ApplyInto implements the [Lut] interface.
-func (l *LutBToA) ApplyInto(input, dst []float64, ws *Workspace) {
-	if len(input) != l.inputChannels {
-		zeroFloats(dst[:l.outputChannels])
+// Apply implements the [LUT] interface.
+func (l *LUTBToA) Apply(input, dst []float64, ws *Workspace) {
+	if len(input) != l.nInput {
+		zeroFloats(dst[:l.nOutput])
 		return
 	}
-	v := ws.values(l.inputChannels)
+	v := ws.values(l.nInput)
 	copy(v, input)
 	applyCurves(l.bCurves, v)
 	applyMatrix3x4InPlace(l.matrix, v)
 	applyCurves(l.mCurves, v)
-	clutGridInto(l.clut, l.gridPoints, l.outputChannels, v, dst, ws)
-	applyCurves(l.aCurves, dst[:l.outputChannels])
-	clampInto(dst[:l.outputChannels])
+	clutGridInto(l.clut, l.gridPoints, l.nOutput, v, dst, ws)
+	applyCurves(l.aCurves, dst[:l.nOutput])
+	clampInto(dst[:l.nOutput])
 }
 
 // Encode converts the LUT to lutBtoAType (mBA) format.
-func (l *LutBToA) Encode() ([]byte, error) {
-	return encodeLutAB(l.inputChannels, l.outputChannels, l.aCurves, l.gridPoints, l.clut, l.clutPrecision, l.mCurves, l.matrix, l.bCurves, true)
+func (l *LUTBToA) Encode() ([]byte, error) {
+	return encodeLUTAB(l.nInput, l.nOutput, l.aCurves, l.gridPoints, l.clut, l.clutPrecision, l.mCurves, l.matrix, l.bCurves, true)
 }
 
-func decodeLutBToA(b *membudget.Budget, data []byte) (*LutBToA, error) {
+func decodeLUTBToA(b *membudget.Budget, data []byte) (*LUTBToA, error) {
 	if len(data) < 32 {
 		return nil, errInvalidTagData
 	}
@@ -693,9 +660,9 @@ func decodeLutBToA(b *membudget.Budget, data []byte) (*LutBToA, error) {
 	clutOffset := getUint32(data, 24)
 	aCurveOffset := getUint32(data, 28)
 
-	lut := &LutBToA{
-		inputChannels:  inputChannels,
-		outputChannels: outputChannels,
+	lut := &LUTBToA{
+		nInput:  inputChannels,
+		nOutput: outputChannels,
 	}
 
 	// decode B curves (input curves for mBA)
@@ -873,7 +840,7 @@ func clutGridInto(clut []float64, gridPoints []int, outChannels int, values, dst
 	multilinearInterpInto(clut, gridPoints, strides, outChannels, values, dst, indices, fracs)
 }
 
-// clutScalarGridInto is [clutGridInto] for LUTs (Lut8/Lut16) whose grid size is
+// clutScalarGridInto is [clutGridInto] for LUTs (LUT8/LUT16) whose grid size is
 // the same scalar gridSize for every one of the inputChannels dimensions.
 func clutScalarGridInto(clut []float64, gridSize, inputChannels, outChannels int, values, dst []float64, ws *Workspace) {
 	if clut == nil || gridSize == 0 {
@@ -1024,7 +991,7 @@ func decodeCLUT(b *membudget.Budget, data []byte, offset int, inputChannels, out
 	return gridPoints, clut, precision, nil
 }
 
-func encodeLutAB(inputChannels, outputChannels int, aCurves []*Curve, gridPoints []int, clut []float64, clutPrecision int, mCurves []*Curve, matrix []float64, bCurves []*Curve, isBToA bool) ([]byte, error) {
+func encodeLUTAB(inputChannels, outputChannels int, aCurves []*Curve, gridPoints []int, clut []float64, clutPrecision int, mCurves []*Curve, matrix []float64, bCurves []*Curve, isBToA bool) ([]byte, error) {
 	offset := uint32(32)
 
 	// determine curve counts based on format

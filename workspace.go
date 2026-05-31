@@ -19,14 +19,10 @@ package icc
 // Workspace holds reusable scratch buffers so that colour conversions can run
 // without per-call heap allocation.
 //
-// A nil *Workspace is valid: its accessors then allocate fresh buffers,
-// reproducing the behaviour of the plain allocating conversion path. To avoid
-// allocation in a hot loop, allocate one Workspace and pass it to every
-// conversion call.
+// The zero value &Workspace{} is ready to use.
 //
-// A Workspace is not safe for concurrent use. Give each goroutine its own;
-// never share one across goroutines, and never store one on a [Transform]
-// (which may itself be shared).
+// A Workspace is not safe for concurrent use, use separate Workspaces for
+// separate goroutines.
 type Workspace struct {
 	resultBuf  []float64 // transform-level input/output buffer
 	valuesBuf  []float64 // LUT pipeline working buffer
@@ -41,20 +37,9 @@ type Workspace struct {
 }
 
 // Scratch returns a reusable []float64 of length n bound to the given slot.
-// Buffers for distinct slots are independent and stay valid across nested
-// conversion calls, so a caller may hold one slot's buffer while requesting
-// another.
-//
-// icc never touches these buffers; they exist purely for callers layering on
-// top of this package (for example, threading colour values through nested
-// colour-space conversions). The contents are not zeroed — overwrite the
-// returned buffer fully. Requesting the same slot again returns the same
-// (possibly grown) buffer, so consume a slot's contents before requesting it
-// again. Slots are small dense indices starting at 0. A nil Workspace allocates.
+// The icc library never touches these buffers; they are for the callers' use
+// as scratch space.  Requesting the same slot again returns the same buffer.
 func (ws *Workspace) Scratch(slot, n int) []float64 {
-	if ws == nil {
-		return make([]float64, n)
-	}
 	if slot >= len(ws.scratch) {
 		ws.scratch = append(ws.scratch, make([][]float64, slot+1-len(ws.scratch))...)
 	}
@@ -63,63 +48,45 @@ func (ws *Workspace) Scratch(slot, n int) []float64 {
 }
 
 func growFloats(buf []float64, n int) []float64 {
-	if cap(buf) < n {
-		return make([]float64, n)
+	if len(buf) < n {
+		buf = append(buf, make([]float64, n-len(buf))...)
 	}
 	return buf[:n]
 }
 
 func growInts(buf []int, n int) []int {
-	if cap(buf) < n {
-		return make([]int, n)
+	if len(buf) < n {
+		buf = append(buf, make([]int, n-len(buf))...)
 	}
 	return buf[:n]
 }
 
 func (ws *Workspace) result(n int) []float64 {
-	if ws == nil {
-		return make([]float64, n)
-	}
 	ws.resultBuf = growFloats(ws.resultBuf, n)
 	return ws.resultBuf
 }
 
 func (ws *Workspace) values(n int) []float64 {
-	if ws == nil {
-		return make([]float64, n)
-	}
 	ws.valuesBuf = growFloats(ws.valuesBuf, n)
 	return ws.valuesBuf
 }
 
 func (ws *Workspace) fracs(n int) []float64 {
-	if ws == nil {
-		return make([]float64, n)
-	}
 	ws.fracsBuf = growFloats(ws.fracsBuf, n)
 	return ws.fracsBuf
 }
 
 func (ws *Workspace) indices(n int) []int {
-	if ws == nil {
-		return make([]int, n)
-	}
 	ws.indicesBuf = growInts(ws.indicesBuf, n)
 	return ws.indicesBuf
 }
 
 func (ws *Workspace) grid(n int) []int {
-	if ws == nil {
-		return make([]int, n)
-	}
 	ws.gridBuf = growInts(ws.gridBuf, n)
 	return ws.gridBuf
 }
 
 func (ws *Workspace) strides(n int) []int {
-	if ws == nil {
-		return make([]int, n)
-	}
 	ws.stridesBuf = growInts(ws.stridesBuf, n)
 	return ws.stridesBuf
 }

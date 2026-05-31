@@ -38,22 +38,26 @@ func graySampledProfile() *Profile {
 	}
 }
 
-// TestSharedTransformConcurrent checks that a single Transform may be used from
-// several goroutines at once, each with its own Workspace. Run with -race to
-// catch unsynchronised lazy state (e.g. a Curve's cached inverse table).
+// TestSharedTransformConcurrent checks that a single bidirectional Transform may
+// be used from several goroutines at once, each with its own Workspace, with
+// both directions exercised concurrently. Run with -race to catch unsynchronised
+// lazy state: the per-direction fwdOnce/revOnce builds and a Curve's cached
+// inverse table.
 func TestSharedTransformConcurrent(t *testing.T) {
 	t.Run("grayTRC", func(t *testing.T) {
-		rev, err := NewTransform(graySampledProfile(), PCSToDevice, Perceptual)
+		tr, err := NewTransform(graySampledProfile(), Perceptual)
 		if err != nil {
 			t.Fatal(err)
 		}
 		var wg sync.WaitGroup
 		for g := range 8 {
 			wg.Go(func() {
-				dst := make([]float64, rev.Channels())
+				dst := make([]float64, tr.Channels())
 				ws := &Workspace{}
 				for i := range 20000 {
-					rev.FromXYZInto(0, float64((i+g)%101)/100, 0, dst, ws)
+					f := float64((i+g)%101) / 100
+					tr.ToXYZ([]float64{f}, ws)   // first-use forward
+					tr.FromXYZ(0, f, 0, dst, ws) // first-use reverse (prepareInverse)
 				}
 			})
 		}
@@ -65,23 +69,19 @@ func TestSharedTransformConcurrent(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		fwd, err := NewTransform(p, DeviceToPCS, Perceptual)
-		if err != nil {
-			t.Fatal(err)
-		}
-		rev, err := NewTransform(p, PCSToDevice, Perceptual)
+		tr, err := NewTransform(p, Perceptual)
 		if err != nil {
 			t.Fatal(err)
 		}
 		var wg sync.WaitGroup
 		for g := range 8 {
 			wg.Go(func() {
-				dst := make([]float64, rev.Channels())
+				dst := make([]float64, tr.Channels())
 				ws := &Workspace{}
 				for i := range 5000 {
 					f := float64((i+g)%101) / 100
-					fwd.ToXYZ([]float64{f, 1 - f, f, 1 - f}, ws)
-					rev.FromXYZInto(0.3+0.1*f, 0.4, 0.5, dst, ws)
+					tr.ToXYZ([]float64{f, 1 - f, f, 1 - f}, ws) // first-use forward LUT
+					tr.FromXYZ(0.3+0.1*f, 0.4, 0.5, dst, ws)    // first-use reverse LUT
 				}
 			})
 		}

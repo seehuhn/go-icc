@@ -19,51 +19,61 @@ package icc
 import (
 	"errors"
 	"math"
+	"sync"
 )
 
-// Direction specifies the direction of a colour transformation.
-type Direction int
+// direction selects which tag chain a LUT profile uses; it is an internal
+// detail of LUT chain selection only.
+type direction int
 
 const (
-	// DeviceToPCS converts from device colour space to Profile Connection Space.
-	DeviceToPCS Direction = iota
-	// PCSToDevice converts from Profile Connection Space to device colour space.
-	PCSToDevice
+	deviceToPCS direction = iota
+	pcsToDevice
 )
 
 // Transform performs colour conversions using an ICC profile.
 //
-// Create a Transform using [NewTransform], then use [Transform.ToXYZ] or
-// [Transform.FromXYZ] to convert colours. The Transform supports matrix/TRC
+// Create a Transform using [NewTransform], then use [Transform.ToXYZ] (device
+// to PCS) and [Transform.FromXYZ] (PCS to device) to convert colours. A single
+// Transform converts in both directions. The Transform supports matrix/TRC
 // profiles (common for displays), grayscale profiles, and LUT-based profiles
 // (common for printers).
 //
-// A Transform is read-only once created: [Transform.ToXYZ], [Transform.FromXYZ],
-// [Transform.Apply], and [Transform.FromXYZInto] may be called concurrently from
-// multiple goroutines, provided each goroutine uses its own [Workspace] (or nil).
+// Not every profile supports both directions (e.g. a singular colour matrix, or
+// a LUT profile carrying only AToB or only BToA tags). Query
+// [Transform.CanToXYZ] and [Transform.CanFromXYZ] before relying on a direction;
+// an unsupported direction yields zero output.
+//
+// A Transform is safe for concurrent use: [Transform.ToXYZ] and
+// [Transform.FromXYZ] may be called from multiple goroutines, provided each
+// goroutine uses its own [Workspace].
 type Transform struct {
-	profile   *Profile
-	direction Direction
-	intent    RenderingIntent
+	profile *Profile
+	intent  RenderingIntent
 
 	// profile type determines which fields are used
 	profileType profileType
 
 	// for matrix/TRC profiles (RGB)
 	matrix    []float64 // 3x3 matrix: device RGB to XYZ
-	matrixInv []float64 // inverse matrix: XYZ to device RGB
-	trc       [3]*Curve // R, G, B TRCs
-	trcInv    [3]*Curve // inverted TRCs (only for PCSToDevice)
+	matrixInv []float64 // inverse matrix: XYZ to device RGB; nil if singular
+	trc       [3]*Curve // R, G, B TRCs (prepareInverse called lazily for reverse)
 
 	// for gray TRC profiles
-	grayTRC    *Curve
-	grayTRCInv *Curve
+	grayTRC *Curve
 
-	// for LUT-based profiles
-	lut Lut
+	// for LUT-based profiles: presence recorded eagerly, decoded lazily
+	hasAToB bool
+	hasBToA bool
+	fwdLUT  LUT // built under fwdOnce
+	revLUT  LUT // built under revOnce
 
 	// white point for chromatic adaptation
 	whitePoint [3]float64 // XYZ of media white point
+
+	// lazy per-direction construction keeps a shared Transform concurrency-safe
+	fwdOnce sync.Once
+	revOnce sync.Once
 }
 
 type profileType int
@@ -72,22 +82,23 @@ const (
 	profileTypeUnknown profileType = iota
 	profileTypeMatrixTRC
 	profileTypeGrayTRC
-	profileTypeLut
+	profileTypeLUT
 )
 
-// NewTransform creates a colour transform from an ICC profile.
+// NewTransform creates a bidirectional colour transform from an ICC profile.
 //
-// The direction specifies whether to convert from device colours to PCS
-// ([DeviceToPCS]) or from PCS to device colours ([PCSToDevice]).
-// The intent selects which rendering intent to use for LUT-based profiles.
+// The returned Transform converts device colours to PCS XYZ ([Transform.ToXYZ])
+// and PCS XYZ back to device colours ([Transform.FromXYZ]). The intent selects
+// the rendering intent for LUT-based profiles and applies to both directions.
 //
-// After creating the transform, use [Transform.ToXYZ] or [Transform.FromXYZ]
-// to convert colours.
-func NewTransform(p *Profile, dir Direction, intent RenderingIntent) (*Transform, error) {
+// NewTransform fails only for profiles that are fundamentally unusable (an
+// unknown profile type, or undecodable matrix/gray data). A profile that can
+// convert in only one direction is not an error; query [Transform.CanToXYZ] and
+// [Transform.CanFromXYZ] before relying on a direction.
+func NewTransform(p *Profile, intent RenderingIntent) (*Transform, error) {
 	t := &Transform{
-		profile:   p,
-		direction: dir,
-		intent:    intent,
+		profile: p,
+		intent:  intent,
 	}
 
 	// detect profile type
@@ -102,10 +113,8 @@ func NewTransform(p *Profile, dir Direction, intent RenderingIntent) (*Transform
 		if err := t.initGrayTRC(); err != nil {
 			return nil, err
 		}
-	case profileTypeLut:
-		if err := t.initLut(); err != nil {
-			return nil, err
-		}
+	case profileTypeLUT:
+		t.initLUTPresence()
 	default:
 		return nil, errors.New("icc: unsupported profile type")
 	}
@@ -124,22 +133,22 @@ func NewTransform(p *Profile, dir Direction, intent RenderingIntent) (*Transform
 func detectProfileType(p *Profile) profileType {
 	// check for LUT-based profile (takes precedence)
 	if _, ok := p.TagData[AToB0]; ok {
-		return profileTypeLut
+		return profileTypeLUT
 	}
 	if _, ok := p.TagData[AToB1]; ok {
-		return profileTypeLut
+		return profileTypeLUT
 	}
 	if _, ok := p.TagData[AToB2]; ok {
-		return profileTypeLut
+		return profileTypeLUT
 	}
 	if _, ok := p.TagData[BToA0]; ok {
-		return profileTypeLut
+		return profileTypeLUT
 	}
 	if _, ok := p.TagData[BToA1]; ok {
-		return profileTypeLut
+		return profileTypeLUT
 	}
 	if _, ok := p.TagData[BToA2]; ok {
-		return profileTypeLut
+		return profileTypeLUT
 	}
 
 	// check for matrix/TRC profile
@@ -185,13 +194,8 @@ func (t *Transform) initMatrixTRC() error {
 		rXYZ[2], gXYZ[2], bXYZ[2],
 	}
 
-	// compute inverse matrix only when needed
-	if t.direction == PCSToDevice {
-		t.matrixInv = invertMatrix3x3(t.matrix)
-		if t.matrixInv == nil {
-			return errors.New("icc: singular colour matrix")
-		}
-	}
+	// inverse used by FromXYZ; nil (singular) just means reverse unavailable
+	t.matrixInv = invertMatrix3x3(t.matrix)
 
 	// parse TRCs
 	rTRC, err := DecodeCurve(p.TagData[RedTRC])
@@ -208,15 +212,6 @@ func (t *Transform) initMatrixTRC() error {
 	}
 
 	t.trc = [3]*Curve{rTRC, gTRC, bTRC}
-	t.trcInv = [3]*Curve{rTRC, gTRC, bTRC} // same curves used for inversion
-
-	// pre-build the inverse tables so that a Transform shared across goroutines
-	// can run FromXYZ/FromXYZInto concurrently without lazily mutating Curve state
-	if t.direction == PCSToDevice {
-		for _, c := range t.trcInv {
-			c.prepareInverse()
-		}
-	}
 
 	return nil
 }
@@ -230,47 +225,102 @@ func (t *Transform) initGrayTRC() error {
 	}
 
 	t.grayTRC = grayTRC
-	t.grayTRCInv = grayTRC
-
-	// pre-build the inverse table so that a Transform shared across goroutines
-	// can run FromXYZ/FromXYZInto concurrently without lazily mutating Curve state
-	if t.direction == PCSToDevice {
-		t.grayTRCInv.prepareInverse()
-	}
 
 	return nil
 }
 
-func (t *Transform) initLut() error {
+// initLUTPresence records which AToB*/BToA* tags exist (cheap map lookups);
+// the LUTs themselves are decoded lazily per direction.
+func (t *Transform) initLUTPresence() {
 	p := t.profile
-
-	// preferred-first ordering: try the tag for the requested intent, then
-	// the perceptual tag (ICC default fallback), then the remaining one.
-	chain := lutFallbackChain(t.direction, t.intent)
-
-	var data []byte
-	for _, tagType := range chain {
-		if d, ok := p.TagData[tagType]; ok {
-			data = d
+	for _, tag := range []TagType{AToB0, AToB1, AToB2} {
+		if _, ok := p.TagData[tag]; ok {
+			t.hasAToB = true
 			break
 		}
 	}
-	if data == nil {
-		return errors.New("icc: missing LUT tag")
+	for _, tag := range []TagType{BToA0, BToA1, BToA2} {
+		if _, ok := p.TagData[tag]; ok {
+			t.hasBToA = true
+			break
+		}
 	}
+}
 
-	lut, err := DecodeLut(data)
-	if err != nil {
-		return err
+// buildForward decodes the forward (device->PCS) machinery on first ToXYZ.
+func (t *Transform) buildForward() {
+	t.fwdOnce.Do(func() {
+		if t.profileType == profileTypeLUT {
+			t.fwdLUT = t.decodeLUTChain(deviceToPCS)
+		}
+	})
+}
+
+// buildReverse decodes the reverse (PCS->device) machinery on first FromXYZ.
+// For matrix/gray profiles this builds the inverse curve tables; a Transform
+// shared across goroutines stays safe because the build runs once.
+func (t *Transform) buildReverse() {
+	t.revOnce.Do(func() {
+		switch t.profileType {
+		case profileTypeMatrixTRC:
+			for _, c := range t.trc {
+				c.prepareInverse()
+			}
+		case profileTypeGrayTRC:
+			t.grayTRC.prepareInverse()
+		case profileTypeLUT:
+			t.revLUT = t.decodeLUTChain(pcsToDevice)
+		}
+	})
+}
+
+// decodeLUTChain decodes the preferred LUT tag for the given direction and the
+// transform's intent. It returns nil if no tag is present or every present tag
+// fails to decode; the caller then degrades to zero output.
+func (t *Transform) decodeLUTChain(dir direction) LUT {
+	// preferred-first ordering: try the tag for the requested intent, then
+	// the perceptual tag (ICC default fallback), then the remaining one.
+	// A present-but-malformed tag must not mask a valid fallback, so skip
+	// over decode failures rather than giving up.
+	for _, tagType := range lutFallbackChain(dir, t.intent) {
+		if d, ok := t.profile.TagData[tagType]; ok {
+			lut, err := DecodeLUT(d)
+			if err != nil {
+				continue
+			}
+			return lut
+		}
 	}
-
-	t.lut = lut
 	return nil
 }
 
-func lutFallbackChain(dir Direction, intent RenderingIntent) []TagType {
+// CanToXYZ reports whether forward (device to PCS) conversion is supported.
+func (t *Transform) CanToXYZ() bool {
+	switch t.profileType {
+	case profileTypeMatrixTRC, profileTypeGrayTRC:
+		return true
+	case profileTypeLUT:
+		return t.hasAToB
+	}
+	return false
+}
+
+// CanFromXYZ reports whether reverse (PCS to device) conversion is supported.
+func (t *Transform) CanFromXYZ() bool {
+	switch t.profileType {
+	case profileTypeMatrixTRC:
+		return t.matrixInv != nil
+	case profileTypeGrayTRC:
+		return true
+	case profileTypeLUT:
+		return t.hasBToA
+	}
+	return false
+}
+
+func lutFallbackChain(dir direction, intent RenderingIntent) []TagType {
 	var b0, b1, b2 TagType
-	if dir == DeviceToPCS {
+	if dir == deviceToPCS {
 		b0, b1, b2 = AToB0, AToB1, AToB2
 	} else {
 		b0, b1, b2 = BToA0, BToA1, BToA2
@@ -307,60 +357,27 @@ func parseXYZ(data []byte) ([3]float64, error) {
 	return [3]float64{x, y, z}, nil
 }
 
-// Apply transforms a colour. Input/output are normalised [0,1] slices.
-// For DeviceToPCS direction, input is device colour, output is PCS XYZ or Lab.
-// For PCSToDevice direction, input is PCS XYZ or Lab, output is device colour.
-func (t *Transform) Apply(input []float64) []float64 {
-	switch t.profileType {
-	case profileTypeMatrixTRC:
-		if len(input) != 3 {
-			return make([]float64, 3)
-		}
-		x, y, z := t.applyMatrixTRC3(input[0], input[1], input[2])
-		return []float64{x, y, z}
-	case profileTypeGrayTRC:
-		if t.direction == DeviceToPCS {
-			if len(input) != 1 {
-				return make([]float64, 3)
-			}
-			x, y, z := t.grayTRCToPCS(input[0])
-			return []float64{x, y, z}
-		}
-		// PCSToDevice: extract Y from D50-adapted XYZ
-		y := input[0]
-		if len(input) >= 2 {
-			y = input[1]
-		}
-		return []float64{t.grayTRCFromPCS(y)}
-	case profileTypeLut:
-		return t.applyLut(input)
-	}
-	return input
+// matrixTRCToPCS maps a device colour triple in [0,1] to PCS XYZ: linearise via
+// the TRCs, then apply the matrix. Returned by value to avoid per-call allocation.
+func (t *Transform) matrixTRCToPCS(a, b, c float64) (float64, float64, float64) {
+	r := t.trc[0].Evaluate(a)
+	g := t.trc[1].Evaluate(b)
+	bl := t.trc[2].Evaluate(c)
+	return t.matrix[0]*r + t.matrix[1]*g + t.matrix[2]*bl,
+		t.matrix[3]*r + t.matrix[4]*g + t.matrix[5]*bl,
+		t.matrix[6]*r + t.matrix[7]*g + t.matrix[8]*bl
 }
 
-// applyMatrixTRC3 applies a 3-channel matrix-TRC transform to a colour
-// triple, returning the transformed triple by value to avoid per-call
-// allocation.  For DeviceToPCS the input is device colour in [0,1] and
-// the output is PCS XYZ; for PCSToDevice the input is PCS XYZ and the
-// output is device colour in [0,1].
-func (t *Transform) applyMatrixTRC3(a, b, c float64) (float64, float64, float64) {
-	if t.direction == DeviceToPCS {
-		// linearise via TRCs, then matrix to XYZ
-		r := t.trc[0].Evaluate(a)
-		g := t.trc[1].Evaluate(b)
-		bl := t.trc[2].Evaluate(c)
-		return t.matrix[0]*r + t.matrix[1]*g + t.matrix[2]*bl,
-			t.matrix[3]*r + t.matrix[4]*g + t.matrix[5]*bl,
-			t.matrix[6]*r + t.matrix[7]*g + t.matrix[8]*bl
-	}
-
-	// PCSToDevice: inverse matrix, then inverse TRCs
+// matrixTRCFromPCS maps PCS XYZ to a device colour triple in [0,1]: apply the
+// inverse matrix, then the inverse TRCs. The caller must ensure the reverse
+// machinery is available (matrixInv != nil) and built (buildReverse).
+func (t *Transform) matrixTRCFromPCS(a, b, c float64) (float64, float64, float64) {
 	r := t.matrixInv[0]*a + t.matrixInv[1]*b + t.matrixInv[2]*c
 	g := t.matrixInv[3]*a + t.matrixInv[4]*b + t.matrixInv[5]*c
 	bl := t.matrixInv[6]*a + t.matrixInv[7]*b + t.matrixInv[8]*c
-	return clamp(t.trcInv[0].Invert(clamp(r, 0, 1)), 0, 1),
-		clamp(t.trcInv[1].Invert(clamp(g, 0, 1)), 0, 1),
-		clamp(t.trcInv[2].Invert(clamp(bl, 0, 1)), 0, 1)
+	return clamp(t.trc[0].Invert(clamp(r, 0, 1)), 0, 1),
+		clamp(t.trc[1].Invert(clamp(g, 0, 1)), 0, 1),
+		clamp(t.trc[2].Invert(clamp(bl, 0, 1)), 0, 1)
 }
 
 // grayTRCToPCS maps a single grey channel to PCS XYZ via the gray TRC.
@@ -373,28 +390,23 @@ func (t *Transform) grayTRCToPCS(in float64) (X, Y, Z float64) {
 }
 
 // grayTRCFromPCS maps PCS Y to a single grey channel via the inverse
-// gray TRC.
+// gray TRC. The caller must ensure the reverse machinery is built (buildReverse).
 func (t *Transform) grayTRCFromPCS(Y float64) float64 {
-	return t.grayTRCInv.Invert(clamp(Y, 0, 1))
+	return t.grayTRC.Invert(clamp(Y, 0, 1))
 }
 
-func (t *Transform) applyLut(input []float64) []float64 {
-	if t.lut == nil {
-		return input
-	}
-	return t.lut.Apply(input)
-}
-
-// ToXYZ converts device colour to PCS XYZ (D50).
-// Input is a normalised [0,1] slice with the device colour values.
+// ToXYZ converts device colour to PCS XYZ (D50). Input is a normalised [0,1]
+// slice with the device colour values.
 //
-// The optional ws supplies reusable scratch buffers; pass a non-nil [Workspace]
-// to avoid per-call allocation in a hot loop, or nil to allocate internally.
-// The same Workspace must not be used from more than one goroutine at a time.
+// The Workspace argument is used as scratch space.
+//
+// If the profile does not support this direction (see [Transform.CanToXYZ]),
+// ToXYZ returns 0, 0, 0.
 func (t *Transform) ToXYZ(device []float64, ws *Workspace) (X, Y, Z float64) {
-	if t.direction != DeviceToPCS {
+	if !t.CanToXYZ() {
 		return 0, 0, 0
 	}
+	t.buildForward()
 
 	switch t.profileType {
 	case profileTypeMatrixTRC:
@@ -402,7 +414,7 @@ func (t *Transform) ToXYZ(device []float64, ws *Workspace) (X, Y, Z float64) {
 		if len(device) != 3 {
 			return 0, 0, 0
 		}
-		return t.applyMatrixTRC3(device[0], device[1], device[2])
+		return t.matrixTRCToPCS(device[0], device[1], device[2])
 
 	case profileTypeGrayTRC:
 		if len(device) != 1 {
@@ -411,16 +423,14 @@ func (t *Transform) ToXYZ(device []float64, ws *Workspace) (X, Y, Z float64) {
 		return t.grayTRCToPCS(device[0])
 	}
 
-	// LUT-based
-	var result []float64
-	if t.lut != nil {
-		result = ws.result(t.lut.OutputChannels())
-		t.lut.ApplyInto(device, result, ws)
-	} else {
-		// degenerate: treat device as PCS, mirroring applyLut returning input
-		result = ws.result(len(device))
-		copy(result, device)
+	// LUT-based. CanToXYZ already confirmed an AToB tag is present, so a nil
+	// fwdLUT here means every present tag failed to decode; honour the
+	// documented contract and yield zero output rather than leaking PCS values.
+	if t.fwdLUT == nil {
+		return 0, 0, 0
 	}
+	result := ws.result(t.fwdLUT.OutputChannels())
+	t.fwdLUT.Apply(device, result, ws)
 	if t.profile.PCS == PCSLabSpace {
 		if len(result) >= 3 {
 			denormaliseLabInPlace(result)
@@ -433,54 +443,43 @@ func (t *Transform) ToXYZ(device []float64, ws *Workspace) (X, Y, Z float64) {
 	return 0, 0, 0
 }
 
-// FromXYZ converts PCS XYZ (D50) to device colour.
-// Returns a normalised [0,1] slice with the device colour values.
-func (t *Transform) FromXYZ(X, Y, Z float64) []float64 {
-	if t.direction != PCSToDevice {
-		return nil
-	}
-	dst := make([]float64, t.Channels())
-	t.FromXYZInto(X, Y, Z, dst, nil)
-	return dst
-}
-
-// FromXYZInto converts PCS XYZ (D50) to device colour, writing into dst.
-// The dst slice must have length >= Channels().
-// This avoids allocations in per-pixel loops.
+// FromXYZ converts PCS XYZ (D50) to device colour, writing the normalised [0,1]
+// device values into dst. The destination slice must have length at least Channels().
 //
-// The optional ws supplies reusable scratch buffers for the LUT-based path;
-// pass a non-nil [Workspace] to avoid per-call allocation in a hot loop, or nil
-// to allocate internally. The same Workspace must not be used from more than
-// one goroutine at a time.
-func (t *Transform) FromXYZInto(X, Y, Z float64, dst []float64, ws *Workspace) {
-	if t.direction != PCSToDevice {
+// The Workspace argument is used as scratch space.
+//
+// If the profile does not support this direction (see [Transform.CanFromXYZ]),
+// FromXYZ writes nothing.
+func (t *Transform) FromXYZ(X, Y, Z float64, dst []float64, ws *Workspace) {
+	if !t.CanFromXYZ() {
 		return
 	}
+	t.buildReverse()
 
 	switch t.profileType {
 	case profileTypeMatrixTRC:
-		dst[0], dst[1], dst[2] = t.applyMatrixTRC3(X, Y, Z)
+		dst[0], dst[1], dst[2] = t.matrixTRCFromPCS(X, Y, Z)
 
 	case profileTypeGrayTRC:
 		dst[0] = t.grayTRCFromPCS(Y)
 
 	default:
-		// LUT-based
+		// LUT-based. CanFromXYZ already confirmed a BToA tag is present, so a
+		// nil revLUT here means every present tag failed to decode; honour the
+		// documented contract and yield zero output rather than leaking PCS
+		// values into the device channels.
+		if t.revLUT == nil {
+			zeroFloats(dst[:t.Channels()])
+			return
+		}
 		in := ws.result(3)
 		if t.profile.PCS == PCSLabSpace {
 			in[0], in[1], in[2] = xyzToLab(X, Y, Z, t.whitePoint)
-			if t.profileType == profileTypeLut {
-				normaliseLabInPlace(in)
-			}
+			normaliseLabInPlace(in)
 		} else {
 			in[0], in[1], in[2] = X, Y, Z
 		}
-		if t.lut == nil {
-			// mirror Apply returning input unchanged
-			copy(dst, in[:3])
-			return
-		}
-		t.lut.ApplyInto(in, dst, ws)
+		t.revLUT.Apply(in, dst, ws)
 	}
 }
 
@@ -633,7 +632,7 @@ func (t *Transform) ProfileType() string {
 		return "Matrix/TRC"
 	case profileTypeGrayTRC:
 		return "Gray TRC"
-	case profileTypeLut:
+	case profileTypeLUT:
 		return "LUT"
 	default:
 		return "Unknown"

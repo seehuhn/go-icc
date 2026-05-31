@@ -73,6 +73,7 @@ func Decode(data []byte) (*Profile, error) {
 		DeviceAttributes:   getUint64(data, 56),
 		RenderingIntent:    RenderingIntent(getUint32(data, 64)),
 		Creator:            getUint32(data, 80),
+		CheckSum:           CheckSumMissing,
 
 		TagData: make(map[TagType][]byte),
 	}
@@ -89,7 +90,14 @@ func Decode(data []byte) (*Profile, error) {
 		putUint32(data, 64, 0)
 		clear(data[84:100])
 
-		computedHash := md5.Sum(data)
+		// hash exactly the declared profile, ignoring any trailing bytes the
+		// caller's buffer may carry beyond the size field; fall back to the
+		// whole slice if the size field is implausible.
+		hashData := data
+		if size := int64(getUint32(data, 0)); size >= 128 && size <= int64(len(data)) {
+			hashData = data[:size]
+		}
+		computedHash := md5.Sum(hashData)
 		if bytes.Equal(computedHash[:], givenHash[:]) {
 			p.CheckSum = CheckSumValid
 		} else {
