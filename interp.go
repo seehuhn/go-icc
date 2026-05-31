@@ -147,12 +147,18 @@ func tetrahedralInterp3DInto(clut []float64, gridSize int, outChannels int, r, g
 	}
 }
 
-// multilinearInterpInto performs n-dimensional linear interpolation, writing the
-// result into out[:outChannels]. The input values are in [0, 1] and gridPoints
-// contains the grid size for each dimension. It uses the caller-supplied strides
-// (see [computeStrides]) and the scratch slices indices and fracs (each of length
-// >= len(gridPoints)).
-func multilinearInterpInto(clut []float64, gridPoints, strides []int, outChannels int, input, out []float64, indices []int, fracs []float64) {
+// simplexInterpInto performs n-dimensional simplex (Kuhn–Freudenthal)
+// interpolation, writing the result into out[:outChannels]. The input values are
+// in [0, 1] and gridPoints contains the grid size for each dimension. It uses the
+// caller-supplied strides (see [computeStrides]) and the scratch slices indices,
+// order (each of length >= len(gridPoints)) and fracs (length >= len(gridPoints)).
+//
+// Within the enclosing grid cell, the point's fractional coordinates are sorted in
+// descending order; that order both selects the simplex and yields its barycentric
+// weights as successive differences of the sorted fractions. Only the n+1 vertices
+// of that simplex are read, versus the 2^n corners of multilinear interpolation.
+// For n = 3 this is identical to [tetrahedralInterp3DInto].
+func simplexInterpInto(clut []float64, gridPoints, strides []int, outChannels int, input, out []float64, indices, order []int, fracs []float64) {
 	nDims := len(gridPoints)
 	if nDims == 0 || len(input) != nDims {
 		for i := range outChannels {
@@ -161,7 +167,7 @@ func multilinearInterpInto(clut []float64, gridPoints, strides []int, outChannel
 		return
 	}
 
-	// compute grid positions and fractions
+	// compute grid positions, fractions, and the identity dimension order
 	for i := range nDims {
 		scale := float64(gridPoints[i] - 1)
 		pos := input[i] * scale
@@ -171,37 +177,51 @@ func multilinearInterpInto(clut []float64, gridPoints, strides []int, outChannel
 		}
 		indices[i] = idx
 		fracs[i] = clamp(pos-float64(idx), 0, 1)
+		order[i] = i
 	}
 
-	// base offset (loop-invariant across corners)
+	// base offset of the all-low corner of the cell
 	baseOffset := 0
 	for d := range nDims {
 		baseOffset += indices[d] * strides[d]
+	}
+
+	// sort dimensions by fraction, descending (insertion sort; nDims is small)
+	for a := 1; a < nDims; a++ {
+		d := order[a]
+		f := fracs[d]
+		b := a
+		for b > 0 && fracs[order[b-1]] < f {
+			order[b] = order[b-1]
+			b--
+		}
+		order[b] = d
 	}
 
 	for i := range outChannels {
 		out[i] = 0
 	}
 
-	// interpolate: iterate over 2^nDims corners
-	numCorners := 1 << nDims
-	for corner := range numCorners {
-		// compute offset and weight for this corner
-		offset := 0
-		weight := 1.0
-		for d := range nDims {
-			if corner&(1<<d) != 0 {
-				offset += strides[d]
-				weight *= fracs[d]
-			} else {
-				weight *= 1 - fracs[d]
-			}
+	// walk the simplex from the all-low corner to the all-high corner, flipping
+	// one coordinate high at each step in descending-fraction order; the weight of
+	// each visited vertex is the drop in fraction across that step
+	off := baseOffset
+	w := 1 - fracs[order[0]]
+	for i := range outChannels {
+		if off+i < len(clut) {
+			out[i] += w * clut[off+i]
 		}
-
+	}
+	for k := range nDims {
+		off += strides[order[k]]
+		if k < nDims-1 {
+			w = fracs[order[k]] - fracs[order[k+1]]
+		} else {
+			w = fracs[order[k]]
+		}
 		for i := range outChannels {
-			idx := baseOffset + offset + i
-			if idx < len(clut) {
-				out[i] += weight * clut[idx]
+			if off+i < len(clut) {
+				out[i] += w * clut[off+i]
 			}
 		}
 	}

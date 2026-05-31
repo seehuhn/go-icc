@@ -19,7 +19,7 @@ package icc
 import "testing"
 
 // cmykTransform decodes the embedded CMYK LUT profile and returns its
-// bidirectional transform (forward: device->PCS, 4-input multilinear; reverse:
+// bidirectional transform (forward: device->PCS, 4-input simplex; reverse:
 // PCS->device, 3-input tetrahedral).
 func cmykTransform(t testing.TB) *Transform {
 	t.Helper()
@@ -36,7 +36,7 @@ func cmykTransform(t testing.TB) *Transform {
 
 // TestWorkspaceToXYZEquivalence checks that a reused (dirtied) Workspace yields
 // the same results as a fresh one, so buffer reuse never leaks stale data into
-// a conversion (LUT/multilinear path). A fresh Workspace zeroes its buffers via
+// a conversion (LUT/simplex path). A fresh Workspace zeroes its buffers via
 // make, whereas a reused one carries non-zero stale contents; both must agree.
 func TestWorkspaceToXYZEquivalence(t *testing.T) {
 	tr := cmykTransform(t)

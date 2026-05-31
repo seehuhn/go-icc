@@ -837,7 +837,8 @@ func clutGridInto(clut []float64, gridPoints []int, outChannels int, values, dst
 	computeStrides(strides, gridPoints, outChannels)
 	indices := ws.indices(n)
 	fracs := ws.fracs(n)
-	multilinearInterpInto(clut, gridPoints, strides, outChannels, values, dst, indices, fracs)
+	order := ws.order(n)
+	simplexInterpInto(clut, gridPoints, strides, outChannels, values, dst, indices, order, fracs)
 }
 
 // clutScalarGridInto is [clutGridInto] for LUTs (LUT8/LUT16) whose grid size is

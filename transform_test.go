@@ -198,42 +198,6 @@ func TestTetrahedralInterp3D(t *testing.T) {
 	}
 }
 
-func TestMultilinearInterp(t *testing.T) {
-	// 3x3x3 identity CLUT
-	gridPoints := []int{3, 3, 3}
-	outChannels := 3
-	size := 3 * 3 * 3 * outChannels
-	clut := make([]float64, size)
-
-	for r := range 3 {
-		for g := range 3 {
-			for b := range 3 {
-				idx := (r*9 + g*3 + b) * outChannels
-				clut[idx+0] = float64(r) / 2.0
-				clut[idx+1] = float64(g) / 2.0
-				clut[idx+2] = float64(b) / 2.0
-			}
-		}
-	}
-
-	tests := [][]float64{
-		{0, 0, 0},
-		{1, 1, 1},
-		{0.5, 0.5, 0.5},
-		{0.25, 0.75, 0.5},
-	}
-
-	for _, tt := range tests {
-		result := multilinearInterp(clut, gridPoints, outChannels, tt)
-		for i := range 3 {
-			if math.Abs(result[i]-tt[i]) > 0.01 {
-				t.Errorf("multilinear(%v) = %v, want %v", tt, result, tt)
-				break
-			}
-		}
-	}
-}
-
 func TestLabToXYZ(t *testing.T) {
 	white := [3]float64{0.9642, 1.0, 0.8249} // D50
 

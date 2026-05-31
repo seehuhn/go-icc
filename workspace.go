@@ -26,10 +26,11 @@ package icc
 type Workspace struct {
 	resultBuf  []float64 // transform-level input/output buffer
 	valuesBuf  []float64 // LUT pipeline working buffer
-	fracsBuf   []float64 // multilinear interpolation fractions
-	indicesBuf []int     // multilinear interpolation grid indices
+	fracsBuf   []float64 // CLUT interpolation fractions
+	indicesBuf []int     // CLUT interpolation grid indices
 	gridBuf    []int     // per-dimension grid sizes
 	stridesBuf []int     // CLUT strides
+	orderBuf   []int     // simplex interpolation dimension order
 
 	// caller-owned scratch buffers addressed by slot index; icc never reads or
 	// writes these (see [Workspace.Scratch]).
@@ -89,4 +90,9 @@ func (ws *Workspace) grid(n int) []int {
 func (ws *Workspace) strides(n int) []int {
 	ws.stridesBuf = growInts(ws.stridesBuf, n)
 	return ws.stridesBuf
+}
+
+func (ws *Workspace) order(n int) []int {
+	ws.orderBuf = growInts(ws.orderBuf, n)
+	return ws.orderBuf
 }
