@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.7.4] (2026-06-25)
+
+### Added
+- `Workspace` holds reusable scratch buffers so colour conversions run
+  without per-call heap allocation; use one per goroutine for
+  concurrent, allocation-free transforms.
+
+### Changed
+- `Transform` is now bidirectional: a single transform converts both
+  device→PCS (`ToXYZ`) and PCS→device (`FromXYZ`), and the public API
+  was tidied accordingly.
+- N-dimensional CLUTs are interpolated with simplex interpolation.
+
 ## [0.7.3] (2026-05-19)
 
 ### Changed
