@@ -475,12 +475,15 @@ func (t *Transform) toPCS(device []float64, ws *Workspace) (X, Y, Z float64) {
 	result := ws.result(t.fwdLUT.OutputChannels())
 	t.fwdLUT.Apply(device, result, ws)
 	if t.profile.PCS == PCSLabSpace {
-		// both calls tolerate a LUT with fewer than three output channels
+		// all three calls tolerate a LUT with fewer than three output channels
+		if usesLegacyLab(t.fwdLUT) {
+			legacyLabToCurrent(result)
+		}
 		denormaliseLabInPlace(result)
 		return labToXYZ(result)
 	}
 	if len(result) >= 3 {
-		return result[0], result[1], result[2]
+		return result[0] * pcsXYZScale, result[1] * pcsXYZScale, result[2] * pcsXYZScale
 	}
 	return 0, 0, 0
 }
@@ -543,8 +546,11 @@ func (t *Transform) fromPCS(X, Y, Z float64, dst []float64, ws *Workspace) {
 		if t.profile.PCS == PCSLabSpace {
 			in[0], in[1], in[2] = xyzToLab(X, Y, Z)
 			normaliseLabInPlace(in)
+			if usesLegacyLab(t.revLUT) {
+				currentLabToLegacy(in)
+			}
 		} else {
-			in[0], in[1], in[2] = X, Y, Z
+			in[0], in[1], in[2] = X/pcsXYZScale, Y/pcsXYZScale, Z/pcsXYZScale
 		}
 		t.revLUT.Apply(in, dst, ws)
 	}
@@ -633,6 +639,19 @@ func xyzToLab(X, Y, Z float64) (L, a, b float64) {
 	return L, a, b
 }
 
+// pcsXYZScale converts a normalised [0,1] LUT value to PCS XYZ.
+//
+// The 16-bit PCSXYZ encoding is a u1Fixed15Number, so 0x8000 stands for 1.0
+// and the top of the range, 0xFFFF, for 1 + 32767/32768.  The extra headroom
+// exists because PCS X and Z routinely exceed 1.0; the PCS white point alone
+// has X = 0.9642 and Z = 0.8249, and saturated colours go higher.  Reading a
+// table as though 0xFFFF meant 1.0 halves every value.
+//
+// The 8-bit case is not covered by the standard, which defines no 8-bit
+// PCSXYZ encoding and advises against lut8Type in PCSXYZ profiles for that
+// reason.  Such tables get the same treatment, as littleCMS does.
+const pcsXYZScale = 65535.0 / 32768.0
+
 // normaliseLabInPlace converts Lab values to their normalised [0,1] encoding
 // for LUT processing, overwriting lab[:3]. Input: L in [0, 100], a and b in
 // [-128, 127]; output: normalised values in [0, 1].
@@ -643,6 +662,50 @@ func normaliseLabInPlace(lab []float64) {
 	lab[0] = lab[0] / 100.0
 	lab[1] = (lab[1] + 128.0) / 255.0
 	lab[2] = (lab[2] + 128.0) / 255.0
+}
+
+// legacyLabScale converts a normalised PCS Lab value from the legacy 16-bit
+// encoding to the one [normaliseLabInPlace] and [denormaliseLabInPlace] use.
+//
+// The two differ in where the top of the range sits: the legacy encoding puts
+// L* = 100 and a* = b* = +127 at 0xFF00, the current one at 0xFFFF. Reading a
+// legacy table as though it were a current one shrinks every value by 0.39%,
+// which is enough to move the media white off the PCS white point.
+const legacyLabScale = 65535.0 / 65280.0
+
+// usesLegacyLab reports whether lut exchanges PCS Lab values in the legacy
+// 16-bit encoding. Of the four tag types that can appear in an AToB* or BToA*
+// tag, only lut16Type does: the 8-bit encoding of lut8Type puts L* = 100 at
+// 0xFF, the top of its range, so it needs no adjustment, and lutAToBType and
+// lutBToAType use the current 16-bit encoding.
+func usesLegacyLab(lut LUT) bool {
+	_, ok := lut.(*LUT16)
+	return ok
+}
+
+// legacyLabToCurrent converts the normalised Lab values in lab[:3] from the
+// legacy 16-bit encoding to the current one.
+//
+// The legacy encoding reaches slightly further than the current one, to
+// L* = 100 + 25500/65280 and a* = b* = 127 + 255/256.  ICC.1:2022 §10.8
+// requires values beyond the current range to be clipped per component: an L*
+// above 100 is not a valid value at all, while the extra a* and b* range holds
+// valid PCS values that the current encoding simply cannot represent.
+//
+// It tolerates a slice shorter than three elements.
+func legacyLabToCurrent(lab []float64) {
+	for i := range min(3, len(lab)) {
+		lab[i] = clamp(lab[i]*legacyLabScale, 0, 1)
+	}
+}
+
+// currentLabToLegacy is the inverse of [legacyLabToCurrent], less the
+// clipping: every value the current encoding can represent is representable in
+// the legacy one too.
+func currentLabToLegacy(lab []float64) {
+	for i := range min(3, len(lab)) {
+		lab[i] /= legacyLabScale
+	}
 }
 
 // denormaliseLabInPlace converts normalised [0,1] Lab encoding back to actual

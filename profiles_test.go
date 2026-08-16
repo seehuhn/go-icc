@@ -285,15 +285,72 @@ func TestCMYKProfilePaperIsPCSWhite(t *testing.T) {
 			X, Y, Z := tr.ToXYZ([]float64{0, 0, 0, 0}, &Workspace{})
 
 			// The tolerance covers the quantisation of the profile's own
-			// tables, which account for about 0.013 here; the bug this guards
+			// tables, which account for about 2e-5 here; the bug this guards
 			// against left paper a quarter of the PCS luminance short.
-			const tol = 0.02
+			const tol = 1e-3
 			if math.Abs(X-PCSWhitePoint[0]) > tol ||
 				math.Abs(Y-PCSWhitePoint[1]) > tol ||
 				math.Abs(Z-PCSWhitePoint[2]) > tol {
 				t.Errorf("paper white -> XYZ (%g, %g, %g), want %v", X, Y, Z, PCSWhitePoint)
 			}
 		})
+	}
+}
+
+// TestCMYKProfileLegacyLabEncoding checks that PCS Lab values from a lut16Type
+// tag are read in the legacy 16-bit encoding.  The reference values come from
+// littleCMS 2.19 (transicc -t1) converting the same profile.
+//
+// Bare paper is the sharpest case: relative colorimetric rendering is defined
+// against the media white, so no ink must land on the PCS white point, L* =
+// 100.  Read in the current 16-bit encoding instead, the same table gives L* =
+// 99.61, and every other colour is off by the same 0.39%.
+func TestCMYKProfileLegacyLabEncoding(t *testing.T) {
+	p, err := Decode(CMYKProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.PCS != PCSLabSpace {
+		t.Fatalf("PCS = %v, want CIELAB", p.PCS)
+	}
+	tr, err := NewTransform(p, RelativeColorimetric)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws := &Workspace{}
+
+	// The grid corners of the CLUT are hit exactly, so these need no
+	// tolerance for interpolation, only for the 16-bit table quantisation.
+	const tol = 5e-3
+	for _, tc := range []struct {
+		name    string
+		cmyk    []float64
+		L, a, b float64
+	}{
+		{"bare paper", []float64{0, 0, 0, 0}, 100, 0, 0},
+		{"solid key", []float64{0, 0, 0, 1}, 22.3667, 1.0430, -0.1992},
+		{"solid cyan", []float64{1, 0, 0, 0}, 63.6351, -39.8633, -48.8086},
+		{"solid magenta", []float64{0, 1, 0, 0}, 53.6137, 76.8242, -6.9609},
+		{"solid yellow", []float64{0, 0, 1, 0}, 94.9678, -7.3789, 90.6758},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			X, Y, Z := tr.ToXYZ(tc.cmyk, ws)
+			L, a, b := xyzToLab(X, Y, Z)
+			if math.Abs(L-tc.L) > tol || math.Abs(a-tc.a) > tol || math.Abs(b-tc.b) > tol {
+				t.Errorf("Lab = (%.4f, %.4f, %.4f), want (%.4f, %.4f, %.4f)",
+					L, a, b, tc.L, tc.a, tc.b)
+			}
+		})
+	}
+
+	// The reverse table carries the same encoding: asked for the PCS white
+	// point, the profile must call for bare paper again.
+	dst := make([]float64, 4)
+	tr.FromXYZ(PCSWhitePoint[0], PCSWhitePoint[1], PCSWhitePoint[2], dst, ws)
+	for i, v := range dst {
+		if math.Abs(v) > 1e-4 {
+			t.Errorf("PCS white asks for %g in channel %d, want no ink", v, i)
+		}
 	}
 }
 

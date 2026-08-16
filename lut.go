@@ -272,6 +272,14 @@ func decodeLUT8(b *membudget.Budget, data []byte) (*LUT8, error) {
 
 // LUT16 represents a 16-bit LUT (lut16Type, tag signature "mft2").
 // Processing order: Matrix → InputCurves → CLUT → OutputCurves
+//
+// The values this type reads and writes are the tag's own encoding, not
+// interpreted colour.  Where a lut16Type exchanges PCS Lab, that encoding is
+// the legacy 16-bit one, which puts L* = 100 and a* = b* = +127 at 0xFF00
+// rather than at 0xFFFF.  Converting to and from Lab therefore needs the
+// profile header, which this type does not see; [Transform] handles it.
+// A caller applying the LUT directly must scale the normalised values by
+// 65535/65280 after Apply, or by the reciprocal before it.
 type LUT16 struct {
 	nInput     int
 	nOutput    int

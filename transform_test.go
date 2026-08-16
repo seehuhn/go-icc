@@ -709,8 +709,8 @@ func TestDecodeLUTChainSkipsMalformedTag(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// the empty fallback LUT passes the device values through unchanged, so a
-	// non-zero result proves the fallback was used rather than abandoned.
+	// the empty fallback LUT passes the device values through, so a non-zero
+	// result proves the fallback was used rather than abandoned.
 	X, Y, Z := tr.ToXYZ([]float64{0.3, 0.4, 0.5}, &Workspace{})
 	if X == 0 && Y == 0 && Z == 0 {
 		t.Errorf("ToXYZ = 0,0,0; malformed AToB0 masked valid AToB1 fallback")
@@ -759,6 +759,107 @@ func TestMalformedLUTYieldsZeroOutput(t *testing.T) {
 			}
 		}
 	})
+}
+
+// identityLUT16Tag builds a lut16Type tag whose CLUT is the identity on the
+// unit cube.  Encode fills the input and output tables with identity ramps, so
+// the whole tag passes normalised values through unchanged.
+func identityLUT16Tag() []byte {
+	const grid = 2
+	clut := make([]float64, grid*grid*grid*3)
+	for r := range grid {
+		for g := range grid {
+			for b := range grid {
+				// the first channel varies slowest
+				base := ((r*grid+g)*grid + b) * 3
+				clut[base+0] = float64(r)
+				clut[base+1] = float64(g)
+				clut[base+2] = float64(b)
+			}
+		}
+	}
+	lut := &LUT16{nInput: 3, nOutput: 3, gridPoints: grid, clut: clut}
+	data, err := lut.Encode()
+	if err != nil {
+		panic(err)
+	}
+	return data
+}
+
+// TestPCSXYZEncoding checks that the PCS XYZ values a LUT tag exchanges are
+// read in the 16-bit PCSXYZ encoding, a u1Fixed15Number in which 0x8000 stands
+// for 1.0 and the top of the range for 1 + 32767/32768.
+//
+// The tag is an identity, so the normalised value encoding the PCS white point
+// must come back out as the white point itself.  Read as a plain [0,1]
+// fraction instead, the same table gives half of every value, and the reverse
+// direction asks for twice the value it should and clips at the top of the
+// input table.
+func TestPCSXYZEncoding(t *testing.T) {
+	p := &Profile{
+		ColorSpace: RGBSpace,
+		PCS:        PCSXYZSpace,
+		TagData: map[TagType][]byte{
+			AToB1: identityLUT16Tag(),
+			BToA1: identityLUT16Tag(),
+		},
+	}
+	tr, err := NewTransform(p, RelativeColorimetric)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws := &Workspace{}
+
+	// the identity CLUT and the 16-bit tables are all exact at these values,
+	// so the tolerance covers float rounding only
+	const tol = 1e-9
+	encoded := []float64{
+		PCSWhitePoint[0] / pcsXYZScale,
+		PCSWhitePoint[1] / pcsXYZScale,
+		PCSWhitePoint[2] / pcsXYZScale,
+	}
+
+	X, Y, Z := tr.ToXYZ(encoded, ws)
+	if math.Abs(X-PCSWhitePoint[0]) > tol ||
+		math.Abs(Y-PCSWhitePoint[1]) > tol ||
+		math.Abs(Z-PCSWhitePoint[2]) > tol {
+		t.Errorf("encoded white -> XYZ (%g, %g, %g), want %v", X, Y, Z, PCSWhitePoint)
+	}
+
+	dst := make([]float64, 3)
+	tr.FromXYZ(PCSWhitePoint[0], PCSWhitePoint[1], PCSWhitePoint[2], dst, ws)
+	for i, v := range dst {
+		if math.Abs(v-encoded[i]) > tol {
+			t.Errorf("PCS white -> channel %d = %g, want %g", i, v, encoded[i])
+		}
+	}
+}
+
+// TestLegacyLabClipping checks that values which the legacy 16-bit PCS Lab
+// encoding can represent but the current one cannot are clipped per component,
+// as ICC.1:2022 §10.8 requires.
+//
+// The identity tag turns device (1, 1, 1) into the top of the table, 0xFFFF in
+// every channel.  Scaled by 65535/65280 and left unclipped that decodes to
+// L* = 100.39 and a* = b* = 127.996, beyond the current encoding's range.
+func TestLegacyLabClipping(t *testing.T) {
+	p := &Profile{
+		ColorSpace: RGBSpace,
+		PCS:        PCSLabSpace,
+		TagData:    map[TagType][]byte{AToB1: identityLUT16Tag()},
+	}
+	tr, err := NewTransform(p, RelativeColorimetric)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	X, Y, Z := tr.ToXYZ([]float64{1, 1, 1}, &Workspace{})
+	L, a, b := xyzToLab(X, Y, Z)
+
+	const tol = 1e-9
+	if math.Abs(L-100) > tol || math.Abs(a-127) > tol || math.Abs(b-127) > tol {
+		t.Errorf("Lab = (%g, %g, %g), want (100, 127, 127)", L, a, b)
+	}
 }
 
 // Gamma is encoded as a u8Fixed8Number (ICC.1:2022 §4.9): round to the nearest
