@@ -262,6 +262,122 @@ func TestCMYKProfileTransform(t *testing.T) {
 	}
 }
 
+// TestCMYKProfilePaperIsPCSWhite checks that unprinted paper lands on the PCS
+// white point.  The PCS is defined relative to D50 whatever the medium is, so
+// the media white point of the profile must not be used as the reference white
+// of the Lab decode; doing so leaves paper at about three quarters of the PCS
+// luminance.
+func TestCMYKProfilePaperIsPCSWhite(t *testing.T) {
+	p, err := Decode(CMYKProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// each intent selects a different AToB table, and all of them are
+	// media-relative
+	for _, intent := range []RenderingIntent{Perceptual, RelativeColorimetric, Saturation} {
+		t.Run(intent.String(), func(t *testing.T) {
+			tr, err := NewTransform(p, intent)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			X, Y, Z := tr.ToXYZ([]float64{0, 0, 0, 0}, &Workspace{})
+
+			// The tolerance covers the quantisation of the profile's own
+			// tables, which account for about 0.013 here; the bug this guards
+			// against left paper a quarter of the PCS luminance short.
+			const tol = 0.02
+			if math.Abs(X-PCSWhitePoint[0]) > tol ||
+				math.Abs(Y-PCSWhitePoint[1]) > tol ||
+				math.Abs(Z-PCSWhitePoint[2]) > tol {
+				t.Errorf("paper white -> XYZ (%g, %g, %g), want %v", X, Y, Z, PCSWhitePoint)
+			}
+		})
+	}
+}
+
+// TestCMYKProfileAbsoluteIntent checks that the absolute colorimetric intent
+// reports paper as the media white point, and that the reverse direction
+// undoes the scaling.
+func TestCMYKProfileAbsoluteIntent(t *testing.T) {
+	p, err := Decode(CMYKProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	white, err := parseXYZ(p.TagData[MediaWhitePoint])
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr, err := NewTransform(p, AbsoluteColorimetric)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	paper := []float64{0, 0, 0, 0}
+	X, Y, Z := tr.ToXYZ(paper, &Workspace{})
+
+	const tol = 0.02
+	if math.Abs(X-white[0]) > tol || math.Abs(Y-white[1]) > tol || math.Abs(Z-white[2]) > tol {
+		t.Errorf("paper white -> XYZ (%g, %g, %g), want %v", X, Y, Z, white)
+	}
+
+	back := make([]float64, 4)
+	tr.FromXYZ(X, Y, Z, back, &Workspace{})
+	for i, v := range back {
+		if math.Abs(v-paper[i]) > 1e-3 {
+			t.Errorf("round trip: channel %d = %g, want %g", i, v, paper[i])
+		}
+	}
+}
+
+// TestSRGBAbsoluteIntent checks the ICC-absolute scaling on the built-in
+// matrix/TRC profiles.  White reports the media white point recorded in the
+// profile: D50 for the version 4 profile, which adapts the tag as ICC v4
+// requires, and the unadapted D65 measurement for the version 2 one.
+func TestSRGBAbsoluteIntent(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		data []byte
+	}{
+		{"v2", SRGBv2Profile},
+		{"v4", SRGBv4Profile},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			p, err := Decode(tt.data)
+			if err != nil {
+				t.Fatal(err)
+			}
+			white, err := parseXYZ(p.TagData[MediaWhitePoint])
+			if err != nil {
+				t.Fatal(err)
+			}
+			tr, err := NewTransform(p, AbsoluteColorimetric)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			X, Y, Z := tr.ToXYZ([]float64{1, 1, 1}, &Workspace{})
+			const tol = 1e-3
+			if math.Abs(X-white[0]) > tol ||
+				math.Abs(Y-white[1]) > tol ||
+				math.Abs(Z-white[2]) > tol {
+				t.Errorf("white -> XYZ (%g, %g, %g), want %v", X, Y, Z, white)
+			}
+
+			rgb := []float64{0.2, 0.5, 0.8}
+			X, Y, Z = tr.ToXYZ(rgb, &Workspace{})
+			back := make([]float64, 3)
+			tr.FromXYZ(X, Y, Z, back, &Workspace{})
+			for i, v := range back {
+				if math.Abs(v-rgb[i]) > 1e-4 {
+					t.Errorf("round trip: channel %d = %g, want %g", i, v, rgb[i])
+				}
+			}
+		})
+	}
+}
+
 func TestSRGBProfilesDeviceRoundTrip(t *testing.T) {
 	for _, tt := range []struct {
 		name string

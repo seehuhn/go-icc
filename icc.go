@@ -329,6 +329,14 @@ const (
 	PCSLabSpace = CIELabSpace
 )
 
+// PCSWhitePoint is the white point of the Profile Connection Space, as CIE
+// 1931 XYZ tristimulus values.  Every PCS value is relative to this white
+// point, whatever white point the profile's medium was measured against.
+//
+// The ICC specification fixes these values.  They are near the CIE D50
+// illuminant, but not identical to it.
+var PCSWhitePoint = [3]float64{0.9642, 1.0, 0.8249}
+
 // PCSName returns the name of the PCS color space.
 func (p *Profile) PCSName() string {
 	switch p.PCS {
@@ -365,7 +373,3 @@ const (
 	CheckSumMissing
 	CheckSumInvalid
 )
-
-// d50WhitePoint is the CIE standard illuminant D50 white point in XYZ coordinates.
-// This is the reference illuminant for the ICC Profile Connection Space.
-var d50WhitePoint = [3]float64{0.9642, 1.0, 0.8249}

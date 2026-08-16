@@ -84,10 +84,10 @@ func (p *Profile) Encode() ([]byte, error) {
 	putUint32(buf, 48, p.DeviceManufacturer)
 	putUint32(buf, 52, p.DeviceModel)
 	putUint64(buf, 56, p.DeviceAttributes)
-	// PCS illuminant (D50 white point as s15Fixed16)
-	putS15Fixed16(buf, 68, d50WhitePoint[0])
-	putS15Fixed16(buf, 72, d50WhitePoint[1])
-	putS15Fixed16(buf, 76, d50WhitePoint[2])
+	// PCS illuminant, as s15Fixed16
+	putS15Fixed16(buf, 68, PCSWhitePoint[0])
+	putS15Fixed16(buf, 72, PCSWhitePoint[1])
+	putS15Fixed16(buf, 76, PCSWhitePoint[2])
 	putUint32(buf, 80, p.Creator)
 
 	putUint32(buf, 128, uint32(len(tags)))

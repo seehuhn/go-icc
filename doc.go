@@ -18,7 +18,7 @@
 //
 // ICC profiles describe how to convert colours between device colour spaces
 // (such as RGB or CMYK) and a device-independent Profile Connection Space (PCS).
-// The PCS is either CIEXYZ or CIELAB, both based on the D50 illuminant.
+// The PCS is either CIEXYZ or CIELAB, both relative to [PCSWhitePoint].
 //
 // # Reading and Writing Profiles
 //

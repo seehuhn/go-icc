@@ -199,14 +199,12 @@ func TestTetrahedralInterp3D(t *testing.T) {
 }
 
 func TestLabToXYZ(t *testing.T) {
-	white := [3]float64{0.9642, 1.0, 0.8249} // D50
-
 	tests := []struct {
 		L, a, b             float64
 		wantX, wantY, wantZ float64
 	}{
-		// white: L=100, a=0, b=0 should give white point
-		{100, 0, 0, 0.9642, 1.0, 0.8249},
+		// white: L=100, a=0, b=0 should give the PCS white point
+		{100, 0, 0, PCSWhitePoint[0], PCSWhitePoint[1], PCSWhitePoint[2]},
 		// black: L=0 should give near zero
 		{0, 0, 0, 0, 0, 0},
 		// mid gray: L=50
@@ -214,29 +212,32 @@ func TestLabToXYZ(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		x, y, z := labToXYZ([]float64{tt.L, tt.a, tt.b}, white)
+		x, y, z := labToXYZ([]float64{tt.L, tt.a, tt.b})
 		if math.Abs(x-tt.wantX) > 0.01 || math.Abs(y-tt.wantY) > 0.01 || math.Abs(z-tt.wantZ) > 0.01 {
 			t.Errorf("labToXYZ(%v, %v, %v) = (%v, %v, %v), want (%v, %v, %v)",
 				tt.L, tt.a, tt.b, x, y, z, tt.wantX, tt.wantY, tt.wantZ)
 		}
 	}
+
+	// a LUT with fewer than three output channels yields zero output
+	if x, y, z := labToXYZ([]float64{50, 0}); x != 0 || y != 0 || z != 0 {
+		t.Errorf("labToXYZ(short) = (%v, %v, %v), want zero", x, y, z)
+	}
 }
 
 func TestXYZToLab(t *testing.T) {
-	white := [3]float64{0.9642, 1.0, 0.8249} // D50
-
 	tests := []struct {
 		X, Y, Z             float64
 		wantL, wantA, wantB float64
 	}{
-		// white point should give L=100, a=0, b=0
-		{0.9642, 1.0, 0.8249, 100, 0, 0},
+		// the PCS white point should give L=100, a=0, b=0
+		{PCSWhitePoint[0], PCSWhitePoint[1], PCSWhitePoint[2], 100, 0, 0},
 		// black should give L=0
 		{0, 0, 0, 0, 0, 0},
 	}
 
 	for _, tt := range tests {
-		L, a, b := xyzToLab(tt.X, tt.Y, tt.Z, white)
+		L, a, b := xyzToLab(tt.X, tt.Y, tt.Z)
 		if math.Abs(L-tt.wantL) > 0.1 || math.Abs(a-tt.wantA) > 0.1 || math.Abs(b-tt.wantB) > 0.1 {
 			t.Errorf("xyzToLab(%v, %v, %v) = (%v, %v, %v), want (%v, %v, %v)",
 				tt.X, tt.Y, tt.Z, L, a, b, tt.wantL, tt.wantA, tt.wantB)
@@ -245,8 +246,6 @@ func TestXYZToLab(t *testing.T) {
 }
 
 func TestLabXYZRoundTrip(t *testing.T) {
-	white := [3]float64{0.9642, 1.0, 0.8249}
-
 	tests := [][]float64{
 		{0, 0, 0},
 		{50, 0, 0},
@@ -258,8 +257,8 @@ func TestLabXYZRoundTrip(t *testing.T) {
 	}
 
 	for _, lab := range tests {
-		x, y, z := labToXYZ(lab, white)
-		L, a, b := xyzToLab(x, y, z, white)
+		x, y, z := labToXYZ(lab)
+		L, a, b := xyzToLab(x, y, z)
 		if math.Abs(L-lab[0]) > 0.01 || math.Abs(a-lab[1]) > 0.01 || math.Abs(b-lab[2]) > 0.01 {
 			t.Errorf("Lab round-trip failed: %v -> XYZ(%v,%v,%v) -> Lab(%v,%v,%v)",
 				lab, x, y, z, L, a, b)
@@ -307,20 +306,29 @@ func TestInvertMatrix3x3(t *testing.T) {
 	}
 }
 
+// d65WhitePoint is the CIE standard illuminant D65 white point, used here to
+// build profiles measured against something other than the PCS illuminant.
+// The values are the ASTM E308 tristimulus values for the 2° observer.
+var d65WhitePoint = [3]float64{0.95047, 1.0, 1.08883}
+
+// encodeXYZTag encodes an XYZType tag holding a single XYZ triple.
+func encodeXYZTag(xyz [3]float64) []byte {
+	data := make([]byte, 20)
+	copy(data[:4], "XYZ ")
+	putS15Fixed16(data, 8, xyz[0])
+	putS15Fixed16(data, 12, xyz[1])
+	putS15Fixed16(data, 16, xyz[2])
+	return data
+}
+
 // makeGrayProfile creates a gray TRC profile with the given gamma and white point.
 func makeGrayProfile(gamma float64, whitePoint [3]float64) *Profile {
-	trcData := (&Curve{Gamma: gamma}).encodeCurveType()
-	wpData := make([]byte, 20)
-	copy(wpData[:4], "XYZ ")
-	putS15Fixed16(wpData, 8, whitePoint[0])
-	putS15Fixed16(wpData, 12, whitePoint[1])
-	putS15Fixed16(wpData, 16, whitePoint[2])
 	return &Profile{
 		ColorSpace: GraySpace,
 		PCS:        PCSXYZSpace,
 		TagData: map[TagType][]byte{
-			GrayTRC:         trcData,
-			MediaWhitePoint: wpData,
+			GrayTRC:         (&Curve{Gamma: gamma}).encodeCurveType(),
+			MediaWhitePoint: encodeXYZTag(whitePoint),
 		},
 	}
 }
@@ -330,8 +338,7 @@ func TestGrayTRCNeutral(t *testing.T) {
 	// output when round-tripped through DeviceToPCS → PCSToDevice.
 	// This is a regression test: previously the D65 white point was used
 	// directly for XYZ scaling, producing a blue-tinted result.
-	d65WP := [3]float64{0.9505, 1.0, 1.0890}
-	p := makeGrayProfile(2.2, d65WP)
+	p := makeGrayProfile(2.2, d65WhitePoint)
 
 	fwd, err := NewTransform(p, Perceptual)
 	if err != nil {
@@ -345,8 +352,8 @@ func TestGrayTRCNeutral(t *testing.T) {
 		if Y > 1e-6 {
 			ratioX := X / Y
 			ratioZ := Z / Y
-			wantRatioX := d50WhitePoint[0] / d50WhitePoint[1]
-			wantRatioZ := d50WhitePoint[2] / d50WhitePoint[1]
+			wantRatioX := PCSWhitePoint[0] / PCSWhitePoint[1]
+			wantRatioZ := PCSWhitePoint[2] / PCSWhitePoint[1]
 			if math.Abs(ratioX-wantRatioX) > 1e-4 {
 				t.Errorf("gray %.3f: X/Y = %.6f, want %.6f (D50 ratio)",
 					gray, ratioX, wantRatioX)
@@ -363,8 +370,8 @@ func TestGrayTRCRoundTrip(t *testing.T) {
 	// round-trip DeviceToPCS → PCSToDevice must recover the original gray,
 	// regardless of the profile's media white point
 	for _, wp := range [][3]float64{
-		d50WhitePoint,
-		{0.9505, 1.0, 1.0890}, // D65
+		PCSWhitePoint,
+		d65WhitePoint,
 		{0.9000, 1.0, 0.9000}, // arbitrary
 	} {
 		p := makeGrayProfile(2.2, wp)
@@ -383,6 +390,93 @@ func TestGrayTRCRoundTrip(t *testing.T) {
 					wp, gray, back[0])
 			}
 		}
+	}
+}
+
+// TestAbsoluteIntentGrayTRC checks the ICC-absolute scaling on a gray profile,
+// where the PCS values never pass through a LUT.
+func TestAbsoluteIntentGrayTRC(t *testing.T) {
+	p := makeGrayProfile(2.2, d65WhitePoint)
+
+	// the tag rounds to s15Fixed16, so read back what the profile stores
+	wp, err := parseXYZ(p.TagData[MediaWhitePoint])
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rel, err := NewTransform(p, RelativeColorimetric)
+	if err != nil {
+		t.Fatal(err)
+	}
+	abs, err := NewTransform(p, AbsoluteColorimetric)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rel.Intent() != RelativeColorimetric || abs.Intent() != AbsoluteColorimetric {
+		t.Errorf("intents %v, %v", rel.Intent(), abs.Intent())
+	}
+
+	for _, gray := range []float64{0.25, 0.5, 1.0} {
+		Xr, Yr, Zr := rel.ToXYZ([]float64{gray}, &Workspace{})
+		Xa, Ya, Za := abs.ToXYZ([]float64{gray}, &Workspace{})
+
+		wantX := Xr * wp[0] / PCSWhitePoint[0]
+		wantY := Yr * wp[1] / PCSWhitePoint[1]
+		wantZ := Zr * wp[2] / PCSWhitePoint[2]
+		if math.Abs(Xa-wantX) > 1e-9 ||
+			math.Abs(Ya-wantY) > 1e-9 ||
+			math.Abs(Za-wantZ) > 1e-9 {
+			t.Errorf("gray %.2f: absolute XYZ (%g, %g, %g), want (%g, %g, %g)",
+				gray, Xa, Ya, Za, wantX, wantY, wantZ)
+		}
+
+		back := make([]float64, 1)
+		abs.FromXYZ(Xa, Ya, Za, back, &Workspace{})
+		if math.Abs(back[0]-gray) > 1e-6 {
+			t.Errorf("gray %.2f: round trip gave %g", gray, back[0])
+		}
+	}
+}
+
+// TestMediaWhitePointFallback checks that an unusable media white point tag
+// falls back to the PCS white.  Without this, the ICC-absolute scaling would
+// zero or invert every output value.
+func TestMediaWhitePointFallback(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		data []byte
+	}{
+		{"missing", nil},
+		{"truncated", []byte("XYZ ")},
+		{"wrong type", append([]byte("desc"), make([]byte, 16)...)},
+		{"zero", encodeXYZTag([3]float64{0, 0, 0})},
+		{"negative", encodeXYZTag([3]float64{-0.9642, -1.0, -0.8249})},
+		{"percent scale", encodeXYZTag([3]float64{96.42, 100, 82.49})},
+		{"huge", encodeXYZTag([3]float64{32767, 32767, 32767})},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := makeGrayProfile(1.0, PCSWhitePoint)
+			if tc.data == nil {
+				delete(p.TagData, MediaWhitePoint)
+			} else {
+				p.TagData[MediaWhitePoint] = tc.data
+			}
+
+			tr, err := NewTransform(p, AbsoluteColorimetric)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tr.whitePoint != PCSWhitePoint {
+				t.Errorf("white point = %v, want %v", tr.whitePoint, PCSWhitePoint)
+			}
+
+			X, Y, Z := tr.ToXYZ([]float64{1}, &Workspace{})
+			if math.Abs(X-PCSWhitePoint[0]) > 1e-9 ||
+				math.Abs(Y-PCSWhitePoint[1]) > 1e-9 ||
+				math.Abs(Z-PCSWhitePoint[2]) > 1e-9 {
+				t.Errorf("white -> XYZ (%g, %g, %g), want %v", X, Y, Z, PCSWhitePoint)
+			}
+		})
 	}
 }
 

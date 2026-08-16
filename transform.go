@@ -39,6 +39,12 @@ const (
 // profiles (common for displays), grayscale profiles, and LUT-based profiles
 // (common for printers).
 //
+// The rendering intent fixed at construction determines what the PCS values
+// mean: under [AbsoluteColorimetric] they are ICC-absolute, and under every
+// other intent they are media-relative, referenced to [PCSWhitePoint]. Both
+// directions use the same reference frame, so a Transform round-trips whatever
+// its intent. Use [Transform.Intent] to recover the choice.
+//
 // Not every profile supports both directions (e.g. a singular colour matrix, or
 // a LUT profile carrying only AToB or only BToA tags). Query
 // [Transform.CanToXYZ] and [Transform.CanFromXYZ] before relying on a direction;
@@ -68,8 +74,11 @@ type Transform struct {
 	fwdLUT  LUT // built under fwdOnce
 	revLUT  LUT // built under revOnce
 
-	// white point for chromatic adaptation
-	whitePoint [3]float64 // XYZ of media white point
+	// XYZ of the media white point, used to convert between media-relative
+	// and ICC-absolute colorimetry.  The PCS itself is always relative to
+	// [PCSWhitePoint], whatever the media white point is.  All components
+	// are positive and bounded, see [mediaWhitePoint].
+	whitePoint [3]float64
 
 	// lazy per-direction construction keeps a shared Transform concurrency-safe
 	fwdOnce sync.Once
@@ -89,7 +98,8 @@ const (
 //
 // The returned Transform converts device colours to PCS XYZ ([Transform.ToXYZ])
 // and PCS XYZ back to device colours ([Transform.FromXYZ]). The intent selects
-// the rendering intent for LUT-based profiles and applies to both directions.
+// which table a LUT-based profile uses, and whether the PCS values are
+// media-relative or ICC-absolute; it applies to both directions.
 //
 // NewTransform fails only for profiles that are fundamentally unusable (an
 // unknown profile type, or undecodable matrix/gray data). A profile that can
@@ -119,13 +129,7 @@ func NewTransform(p *Profile, intent RenderingIntent) (*Transform, error) {
 		return nil, errors.New("icc: unsupported profile type")
 	}
 
-	// parse white point if available
-	if data, ok := p.TagData[MediaWhitePoint]; ok {
-		t.parseWhitePoint(data)
-	} else {
-		// default D50 white point
-		t.whitePoint = d50WhitePoint
-	}
+	t.whitePoint = mediaWhitePoint(p)
 
 	return t, nil
 }
@@ -294,6 +298,11 @@ func (t *Transform) decodeLUTChain(dir direction) LUT {
 	return nil
 }
 
+// Intent returns the rendering intent the Transform was created with.
+func (t *Transform) Intent() RenderingIntent {
+	return t.intent
+}
+
 // CanToXYZ reports whether forward (device to PCS) conversion is supported.
 func (t *Transform) CanToXYZ() bool {
 	switch t.profileType {
@@ -335,11 +344,29 @@ func lutFallbackChain(dir direction, intent RenderingIntent) []TagType {
 	}
 }
 
-func (t *Transform) parseWhitePoint(data []byte) {
-	xyz, err := parseXYZ(data)
-	if err == nil {
-		t.whitePoint = xyz
+// mediaWhitePoint returns the media white point of p, falling back to the PCS
+// white point if the tag is missing, undecodable, or outside the range a
+// tristimulus white point can take.  The encoded values are signed and reach
+// ±32768, so an unchecked tag could flip the sign of the ICC-absolute scaling,
+// divide by zero in it, or inflate it without bound.
+func mediaWhitePoint(p *Profile) [3]float64 {
+	data, ok := p.TagData[MediaWhitePoint]
+	if !ok {
+		return PCSWhitePoint
 	}
+	xyz, err := parseXYZ(data)
+	if err != nil {
+		return PCSWhitePoint
+	}
+	// White points are normalised so that Y is 1 for an ideal medium; real
+	// media stay below this, and no illuminant has a component anywhere near
+	// twice the corresponding PCS white component.
+	for i, v := range xyz {
+		if v <= 0 || v > 2*PCSWhitePoint[i] {
+			return PCSWhitePoint
+		}
+	}
+	return xyz
 }
 
 func parseXYZ(data []byte) ([3]float64, error) {
@@ -381,12 +408,12 @@ func (t *Transform) matrixTRCFromPCS(a, b, c float64) (float64, float64, float64
 }
 
 // grayTRCToPCS maps a single grey channel to PCS XYZ via the gray TRC.
-// PCS is always D50-adapted XYZ; scaling by D50 covers profiles whose
-// media white point differs from D50 (non-conforming but common),
-// because Bradford adaptation is linear in y (WP*y → D50*y).
+// PCS values are always relative to the PCS white point; scaling by it covers
+// profiles whose media white point differs (non-conforming but common),
+// because Bradford adaptation is linear in y (WP*y → PCS*y).
 func (t *Transform) grayTRCToPCS(in float64) (X, Y, Z float64) {
 	y := t.grayTRC.Evaluate(in)
-	return d50WhitePoint[0] * y, d50WhitePoint[1] * y, d50WhitePoint[2] * y
+	return PCSWhitePoint[0] * y, PCSWhitePoint[1] * y, PCSWhitePoint[2] * y
 }
 
 // grayTRCFromPCS maps PCS Y to a single grey channel via the inverse
@@ -395,14 +422,30 @@ func (t *Transform) grayTRCFromPCS(Y float64) float64 {
 	return t.grayTRC.Invert(clamp(Y, 0, 1))
 }
 
-// ToXYZ converts device colour to PCS XYZ (D50). Input is a normalised [0,1]
+// ToXYZ converts device colour to PCS XYZ. Input is a normalised [0,1]
 // slice with the device colour values.
+//
+// For every intent but [AbsoluteColorimetric] the result is media-relative and
+// referenced to [PCSWhitePoint].  Under [AbsoluteColorimetric] it is scaled by
+// the media white point stored in the profile, and so is referenced to the
+// illuminant that tag was measured against.  ICC version 4 requires the tag to
+// be adapted to the PCS white point, while version 2 profiles commonly store
+// the unadapted measurement; the two built-in sRGB profiles differ in exactly
+// this way.
 //
 // The Workspace argument is used as scratch space.
 //
 // If the profile does not support this direction (see [Transform.CanToXYZ]),
 // ToXYZ returns 0, 0, 0.
 func (t *Transform) ToXYZ(device []float64, ws *Workspace) (X, Y, Z float64) {
+	X, Y, Z = t.toPCS(device, ws)
+	if t.intent == AbsoluteColorimetric {
+		X, Y, Z = t.mediaToAbsolute(X, Y, Z)
+	}
+	return X, Y, Z
+}
+
+func (t *Transform) toPCS(device []float64, ws *Workspace) (X, Y, Z float64) {
 	if !t.CanToXYZ() {
 		return 0, 0, 0
 	}
@@ -432,10 +475,9 @@ func (t *Transform) ToXYZ(device []float64, ws *Workspace) (X, Y, Z float64) {
 	result := ws.result(t.fwdLUT.OutputChannels())
 	t.fwdLUT.Apply(device, result, ws)
 	if t.profile.PCS == PCSLabSpace {
-		if len(result) >= 3 {
-			denormaliseLabInPlace(result)
-		}
-		return labToXYZ(result, t.whitePoint)
+		// both calls tolerate a LUT with fewer than three output channels
+		denormaliseLabInPlace(result)
+		return labToXYZ(result)
 	}
 	if len(result) >= 3 {
 		return result[0], result[1], result[2]
@@ -443,14 +485,39 @@ func (t *Transform) ToXYZ(device []float64, ws *Workspace) (X, Y, Z float64) {
 	return 0, 0, 0
 }
 
-// FromXYZ converts PCS XYZ (D50) to device colour, writing the normalised [0,1]
+// FromXYZ converts PCS XYZ to device colour, writing the normalised [0,1]
 // device values into dst. The destination slice must have length at least Channels().
+//
+// The input is interpreted in the same reference frame in which
+// [Transform.ToXYZ] returns its result.
 //
 // The Workspace argument is used as scratch space.
 //
 // If the profile does not support this direction (see [Transform.CanFromXYZ]),
 // FromXYZ writes nothing.
 func (t *Transform) FromXYZ(X, Y, Z float64, dst []float64, ws *Workspace) {
+	if t.intent == AbsoluteColorimetric {
+		X, Y, Z = t.absoluteToMedia(X, Y, Z)
+	}
+	t.fromPCS(X, Y, Z, dst, ws)
+}
+
+// mediaToAbsolute converts media-relative PCS values, which are normalised so
+// that the media white point is the PCS white, to ICC-absolute values.
+func (t *Transform) mediaToAbsolute(X, Y, Z float64) (float64, float64, float64) {
+	return X * t.whitePoint[0] / PCSWhitePoint[0],
+		Y * t.whitePoint[1] / PCSWhitePoint[1],
+		Z * t.whitePoint[2] / PCSWhitePoint[2]
+}
+
+// absoluteToMedia is the inverse of [Transform.mediaToAbsolute].
+func (t *Transform) absoluteToMedia(X, Y, Z float64) (float64, float64, float64) {
+	return X * PCSWhitePoint[0] / t.whitePoint[0],
+		Y * PCSWhitePoint[1] / t.whitePoint[1],
+		Z * PCSWhitePoint[2] / t.whitePoint[2]
+}
+
+func (t *Transform) fromPCS(X, Y, Z float64, dst []float64, ws *Workspace) {
 	if !t.CanFromXYZ() {
 		return
 	}
@@ -474,7 +541,7 @@ func (t *Transform) FromXYZ(X, Y, Z float64, dst []float64, ws *Workspace) {
 		}
 		in := ws.result(3)
 		if t.profile.PCS == PCSLabSpace {
-			in[0], in[1], in[2] = xyzToLab(X, Y, Z, t.whitePoint)
+			in[0], in[1], in[2] = xyzToLab(X, Y, Z)
 			normaliseLabInPlace(in)
 		} else {
 			in[0], in[1], in[2] = X, Y, Z
@@ -488,9 +555,9 @@ func (t *Transform) Channels() int {
 	return t.profile.ColorSpace.NumComponents()
 }
 
-// labToXYZ converts Lab to XYZ using the given white point.
+// labToXYZ converts PCS Lab to PCS XYZ.
 // Lab values: L in [0, 100], a and b in [-128, 127].
-func labToXYZ(lab []float64, white [3]float64) (X, Y, Z float64) {
+func labToXYZ(lab []float64) (X, Y, Z float64) {
 	if len(lab) < 3 {
 		return 0, 0, 0
 	}
@@ -525,27 +592,15 @@ func labToXYZ(lab []float64, white [3]float64) (X, Y, Z float64) {
 		zr = (fz - offset) * scale
 	}
 
-	return xr * white[0], yr * white[1], zr * white[2]
+	return xr * PCSWhitePoint[0], yr * PCSWhitePoint[1], zr * PCSWhitePoint[2]
 }
 
-// xyzToLab converts XYZ to Lab using the given white point.
-func xyzToLab(X, Y, Z float64, white [3]float64) (L, a, b float64) {
-	// use D50 as fallback if white point component is zero
-	wx, wy, wz := white[0], white[1], white[2]
-	if wx == 0 {
-		wx = d50WhitePoint[0]
-	}
-	if wy == 0 {
-		wy = d50WhitePoint[1]
-	}
-	if wz == 0 {
-		wz = d50WhitePoint[2]
-	}
-
+// xyzToLab converts PCS XYZ to PCS Lab.
+func xyzToLab(X, Y, Z float64) (L, a, b float64) {
 	// normalise by white point
-	xr := X / wx
-	yr := Y / wy
-	zr := Z / wz
+	xr := X / PCSWhitePoint[0]
+	yr := Y / PCSWhitePoint[1]
+	zr := Z / PCSWhitePoint[2]
 
 	// f function threshold (6/29)^3
 	threshold := 216.0 / 24389.0
