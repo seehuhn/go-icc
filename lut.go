@@ -78,7 +78,7 @@ type LUT8 struct {
 
 	matrix       []float64 // 3×3, nil if identity
 	inputCurves  []*Curve  // one per input channel
-	clut         []float64 // flattened n-dimensional table, normalised [0,1]
+	clut         []float32 // flattened n-dimensional table, normalised [0,1]
 	outputCurves []*Curve  // one per output channel
 }
 
@@ -134,14 +134,14 @@ func (l *LUT8) Encode() ([]byte, error) {
 			if curve != nil {
 				val = curve.Evaluate(val)
 			}
-			buf[offset+ch*256+i] = byte(clamp(val, 0, 1) * 255.0)
+			buf[offset+ch*256+i] = quantise8(val)
 		}
 	}
 	offset += inputTableSize
 
 	// write CLUT (8-bit values)
 	for i, v := range l.clut {
-		buf[offset+i] = byte(clamp(v, 0, 1) * 255.0)
+		buf[offset+i] = quantise8(float64(v))
 	}
 	offset += clutSize
 
@@ -156,7 +156,7 @@ func (l *LUT8) Encode() ([]byte, error) {
 			if curve != nil {
 				val = curve.Evaluate(val)
 			}
-			buf[offset+ch*256+i] = byte(clamp(val, 0, 1) * 255.0)
+			buf[offset+ch*256+i] = quantise8(val)
 		}
 	}
 
@@ -223,12 +223,12 @@ func decodeLUT8(b *membudget.Budget, data []byte) (*LUT8, error) {
 		return nil, errInvalidTagData
 	}
 
-	clut, err := membudget.AllocSlice[float64](b, clutSize)
+	clut, err := membudget.AllocSlice[float32](b, clutSize)
 	if err != nil {
 		return nil, err
 	}
 	for i := range clutSize {
-		clut[i] = float64(data[clutStart+i]) / 255.0
+		clut[i] = float32(data[clutStart+i]) / 255
 	}
 
 	// output tables: 256 entries per channel
@@ -288,7 +288,7 @@ type LUT16 struct {
 	matrix          []float64 // 3×3, nil if identity
 	inputTableSize  int       // entries per input curve
 	inputCurves     []*Curve  // one per input channel
-	clut            []float64 // flattened n-dimensional table, normalised [0,1]
+	clut            []float32 // flattened n-dimensional table, normalised [0,1]
 	outputTableSize int       // entries per output curve
 	outputCurves    []*Curve  // one per output channel
 }
@@ -356,14 +356,14 @@ func (l *LUT16) Encode() ([]byte, error) {
 			if curve != nil {
 				val = curve.Evaluate(val)
 			}
-			putUint16(buf, offset+(ch*inputTableEntries+i)*2, uint16(clamp(val, 0, 1)*65535.0))
+			putUint16(buf, offset+(ch*inputTableEntries+i)*2, quantise16(val))
 		}
 	}
 	offset += inputTableBytes
 
 	// write CLUT (16-bit values)
 	for i, v := range l.clut {
-		putUint16(buf, offset+i*2, uint16(clamp(v, 0, 1)*65535.0))
+		putUint16(buf, offset+i*2, quantise16(float64(v)))
 	}
 	offset += clutSize * 2
 
@@ -378,7 +378,7 @@ func (l *LUT16) Encode() ([]byte, error) {
 			if curve != nil {
 				val = curve.Evaluate(val)
 			}
-			putUint16(buf, offset+(ch*outputTableEntries+i)*2, uint16(clamp(val, 0, 1)*65535.0))
+			putUint16(buf, offset+(ch*outputTableEntries+i)*2, quantise16(val))
 		}
 	}
 
@@ -446,12 +446,12 @@ func decodeLUT16(b *membudget.Budget, data []byte) (*LUT16, error) {
 		return nil, errInvalidTagData
 	}
 
-	clut, err := membudget.AllocSlice[float64](b, clutSize)
+	clut, err := membudget.AllocSlice[float32](b, clutSize)
 	if err != nil {
 		return nil, err
 	}
 	for i := range clutSize {
-		clut[i] = float64(getUint16(data, clutStart+i*2)) / 65535.0
+		clut[i] = float32(getUint16(data, clutStart+i*2)) / 65535
 	}
 
 	// output tables
@@ -502,7 +502,7 @@ type LUTAToB struct {
 
 	aCurves       []*Curve  // input curves (one per input channel)
 	clutPrecision int       // 1 for 8-bit, 2 for 16-bit (default 2)
-	clut          []float64 // flattened n-dimensional table, normalised [0,1]
+	clut          []float32 // flattened n-dimensional table, normalised [0,1]
 	mCurves       []*Curve  // curves between CLUT and matrix
 	matrix        []float64 // 3×4, nil if identity
 	bCurves       []*Curve  // output curves (one per output channel)
@@ -622,7 +622,7 @@ type LUTBToA struct {
 	matrix        []float64 // 3×4, nil if identity
 	mCurves       []*Curve  // curves between matrix and CLUT
 	clutPrecision int       // 1 for 8-bit, 2 for 16-bit (default 2)
-	clut          []float64 // flattened n-dimensional table, normalised [0,1]
+	clut          []float32 // flattened n-dimensional table, normalised [0,1]
 	aCurves       []*Curve  // output curves (one per output channel)
 }
 
@@ -828,7 +828,7 @@ func applyMatrix3x4InPlace(m, v []float64) {
 // clutGridInto applies a CLUT to values, writing outChannels results into dst.
 // gridPoints holds the grid size of each input dimension. Scratch is taken from
 // ws. It is the allocation-free counterpart of the per-LUT applyCLUT methods.
-func clutGridInto(clut []float64, gridPoints []int, outChannels int, values, dst []float64, ws *Workspace) {
+func clutGridInto(clut []float32, gridPoints []int, outChannels int, values, dst []float64, ws *Workspace) {
 	if clut == nil || len(gridPoints) != len(values) {
 		// degenerate: mirror applyCLUT returning values unchanged
 		n := min(len(values), outChannels)
@@ -851,7 +851,7 @@ func clutGridInto(clut []float64, gridPoints []int, outChannels int, values, dst
 
 // clutScalarGridInto is [clutGridInto] for LUTs (LUT8/LUT16) whose grid size is
 // the same scalar gridSize for every one of the inputChannels dimensions.
-func clutScalarGridInto(clut []float64, gridSize, inputChannels, outChannels int, values, dst []float64, ws *Workspace) {
+func clutScalarGridInto(clut []float32, gridSize, inputChannels, outChannels int, values, dst []float64, ws *Workspace) {
 	if clut == nil || gridSize == 0 {
 		n := min(len(values), outChannels)
 		zeroFloats(dst[:outChannels])
@@ -945,7 +945,7 @@ func decodeMatrix3x4(b *membudget.Budget, data []byte, offset int) ([]float64, e
 	return matrix, nil
 }
 
-func decodeCLUT(b *membudget.Budget, data []byte, offset int, inputChannels, outputChannels int) ([]int, []float64, int, error) {
+func decodeCLUT(b *membudget.Budget, data []byte, offset int, inputChannels, outputChannels int) ([]int, []float32, int, error) {
 	if offset+20 > len(data) {
 		return nil, nil, 0, errInvalidTagData
 	}
@@ -969,29 +969,29 @@ func decodeCLUT(b *membudget.Budget, data []byte, offset int, inputChannels, out
 	}
 
 	clutDataStart := offset + 20
-	var clut []float64
+	var clut []float32
 	switch precision {
 	case 1:
 		if len(data) < clutDataStart+size {
 			return nil, nil, 0, errInvalidTagData
 		}
-		clut, err = membudget.AllocSlice[float64](b, size)
+		clut, err = membudget.AllocSlice[float32](b, size)
 		if err != nil {
 			return nil, nil, 0, err
 		}
 		for i := range size {
-			clut[i] = float64(data[clutDataStart+i]) / 255.0
+			clut[i] = float32(data[clutDataStart+i]) / 255
 		}
 	case 2:
 		if len(data) < clutDataStart+size*2 {
 			return nil, nil, 0, errInvalidTagData
 		}
-		clut, err = membudget.AllocSlice[float64](b, size)
+		clut, err = membudget.AllocSlice[float32](b, size)
 		if err != nil {
 			return nil, nil, 0, err
 		}
 		for i := range size {
-			clut[i] = float64(getUint16(data, clutDataStart+i*2)) / 65535.0
+			clut[i] = float32(getUint16(data, clutDataStart+i*2)) / 65535
 		}
 	default:
 		return nil, nil, 0, errInvalidTagData
@@ -1000,7 +1000,7 @@ func decodeCLUT(b *membudget.Budget, data []byte, offset int, inputChannels, out
 	return gridPoints, clut, precision, nil
 }
 
-func encodeLUTAB(inputChannels, outputChannels int, aCurves []*Curve, gridPoints []int, clut []float64, clutPrecision int, mCurves []*Curve, matrix []float64, bCurves []*Curve, isBToA bool) ([]byte, error) {
+func encodeLUTAB(inputChannels, outputChannels int, aCurves []*Curve, gridPoints []int, clut []float32, clutPrecision int, mCurves []*Curve, matrix []float64, bCurves []*Curve, isBToA bool) ([]byte, error) {
 	offset := uint32(32)
 
 	// determine curve counts based on format
@@ -1104,7 +1104,7 @@ func encodeLUTAB(inputChannels, outputChannels int, aCurves []*Curve, gridPoints
 	return buf, nil
 }
 
-func encodeCLUT(gridPoints []int, outputChannels int, clut []float64, precision int) []byte {
+func encodeCLUT(gridPoints []int, outputChannels int, clut []float32, precision int) []byte {
 	size := computeCLUTSize(gridPoints, outputChannels)
 
 	// default to 16-bit precision if not specified
@@ -1129,11 +1129,11 @@ func encodeCLUT(gridPoints []int, outputChannels int, clut []float64, precision 
 
 	if precision == 1 {
 		for i, v := range clut {
-			buf[20+i] = byte(clamp(v, 0, 1) * 255.0)
+			buf[20+i] = quantise8(float64(v))
 		}
 	} else {
 		for i, v := range clut {
-			putUint16(buf, 20+i*2, uint16(clamp(v, 0, 1)*65535.0))
+			putUint16(buf, 20+i*2, quantise16(float64(v)))
 		}
 	}
 

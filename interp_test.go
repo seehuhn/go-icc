@@ -24,7 +24,7 @@ import (
 
 // tetrahedralInterp3D is an allocating wrapper around [tetrahedralInterp3DInto]
 // used to test the interpolation in isolation.
-func tetrahedralInterp3D(clut []float64, gridSize int, outChannels int, r, g, b float64) []float64 {
+func tetrahedralInterp3D(clut []float32, gridSize int, outChannels int, r, g, b float64) []float64 {
 	out := make([]float64, outChannels)
 	tetrahedralInterp3DInto(clut, gridSize, outChannels, r, g, b, out)
 	return out
@@ -34,7 +34,7 @@ func tetrahedralInterp3D(clut []float64, gridSize int, outChannels int, r, g, b 
 // interpolation. Production code interpolates CLUTs with [simplexInterpInto]
 // (and [tetrahedralInterp3DInto] for 3-D); this routine is the baseline that
 // [BenchmarkMultilinearInterp4D] measures simplex interpolation against.
-func multilinearInterpReferenceInto(clut []float64, gridPoints, strides []int, outChannels int, input, out []float64, indices []int, fracs []float64) {
+func multilinearInterpReferenceInto(clut []float32, gridPoints, strides []int, outChannels int, input, out []float64, indices []int, fracs []float64) {
 	nDims := len(gridPoints)
 	if nDims == 0 || len(input) != nDims {
 		for i := range outChannels {
@@ -78,14 +78,14 @@ func multilinearInterpReferenceInto(clut []float64, gridPoints, strides []int, o
 		for i := range outChannels {
 			idx := baseOffset + offset + i
 			if idx < len(clut) {
-				out[i] += weight * clut[idx]
+				out[i] += weight * float64(clut[idx])
 			}
 		}
 	}
 }
 
 // simplexInterp is an allocating wrapper around [simplexInterpInto].
-func simplexInterp(clut []float64, gridPoints []int, outChannels int, input []float64) []float64 {
+func simplexInterp(clut []float32, gridPoints []int, outChannels int, input []float64) []float64 {
 	out := make([]float64, outChannels)
 	nDims := len(gridPoints)
 	if nDims == 0 || len(input) != nDims {
@@ -101,14 +101,14 @@ func simplexInterp(clut []float64, gridPoints []int, outChannels int, input []fl
 }
 
 // randomCLUT fills a flattened CLUT of the given shape with random values.
-func randomCLUT(rng *rand.Rand, gridPoints []int, outChannels int) []float64 {
+func randomCLUT(rng *rand.Rand, gridPoints []int, outChannels int) []float32 {
 	total := outChannels
 	for _, g := range gridPoints {
 		total *= g
 	}
-	clut := make([]float64, total)
+	clut := make([]float32, total)
 	for i := range clut {
-		clut[i] = rng.Float64()
+		clut[i] = rng.Float32()
 	}
 	return clut
 }
@@ -116,13 +116,13 @@ func randomCLUT(rng *rand.Rand, gridPoints []int, outChannels int) []float64 {
 // affineCLUT fills a CLUT so that grid node j has value
 // b[c] + Σ_d a[d][c]·(j_d/(gridPoints[d]-1)) for each output channel c, i.e. the
 // table samples an affine function of the normalised input coordinates.
-func affineCLUT(gridPoints []int, outChannels int, a [][]float64, b []float64) []float64 {
+func affineCLUT(gridPoints []int, outChannels int, a [][]float64, b []float64) []float32 {
 	n := len(gridPoints)
 	total := outChannels
 	for _, g := range gridPoints {
 		total *= g
 	}
-	clut := make([]float64, total)
+	clut := make([]float32, total)
 	strides := make([]int, n)
 	computeStrides(strides, gridPoints, outChannels)
 
@@ -138,7 +138,7 @@ func affineCLUT(gridPoints []int, outChannels int, a [][]float64, b []float64) [
 				coord := float64(idx[d]) / float64(gridPoints[d]-1)
 				v += a[d][c] * coord
 			}
-			clut[off+c] = v
+			clut[off+c] = float32(v)
 		}
 		k := n - 1
 		for k >= 0 {
@@ -159,7 +159,7 @@ func affineCLUT(gridPoints []int, outChannels int, a [][]float64, b []float64) [
 // cellCornerRange returns the per-channel min and max over the 2^nDims corners
 // of the grid cell that contains input, mirroring the index clamping used by the
 // interpolation routines.
-func cellCornerRange(clut []float64, gridPoints []int, outChannels int, input []float64) (lo, hi []float64) {
+func cellCornerRange(clut []float32, gridPoints []int, outChannels int, input []float64) (lo, hi []float64) {
 	n := len(gridPoints)
 	strides := make([]int, n)
 	computeStrides(strides, gridPoints, outChannels)
@@ -190,7 +190,7 @@ func cellCornerRange(clut []float64, gridPoints []int, outChannels int, input []
 			}
 		}
 		for c := range outChannels {
-			v := clut[off+c]
+			v := float64(clut[off+c])
 			lo[c] = min(lo[c], v)
 			hi[c] = max(hi[c], v)
 		}
@@ -198,7 +198,15 @@ func cellCornerRange(clut []float64, gridPoints []int, outChannels int, input []
 	return lo, hi
 }
 
+// TestSimplexInterpAffineExact checks that simplex interpolation reproduces an
+// affine function sampled on the grid.  The tolerance is set by the CLUT's
+// float32 storage, not by the interpolation: each node value carries up to one
+// float32 ulp, and interpolation forms a convex combination of them, so the
+// result cannot be closer to the float64 affine function than the table is.
 func TestSimplexInterpAffineExact(t *testing.T) {
+	// a few float32 ulps at the magnitudes these affine functions reach
+	const tol = 1e-6
+
 	rng := rand.New(rand.NewSource(1))
 	grids := [][]int{
 		{2, 2},
@@ -229,7 +237,7 @@ func TestSimplexInterpAffineExact(t *testing.T) {
 				for d := range n {
 					want += a[d][c] * input[d]
 				}
-				if math.Abs(got[c]-want) > 1e-9 {
+				if math.Abs(got[c]-want) > tol {
 					t.Fatalf("grid %v input %v: channel %d = %v, want %v (affine)",
 						gridPoints, input, c, got[c], want)
 				}
@@ -265,7 +273,7 @@ func TestSimplexInterpExactAtNodes(t *testing.T) {
 			}
 			got := simplexInterp(clut, gridPoints, outChannels, input)
 			for c := range outChannels {
-				if math.Abs(got[c]-clut[off+c]) > 1e-9 {
+				if math.Abs(got[c]-float64(clut[off+c])) > 1e-9 {
 					t.Fatalf("grid %v node %v: channel %d = %v, want %v",
 						gridPoints, idx, c, got[c], clut[off+c])
 				}

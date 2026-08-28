@@ -117,10 +117,10 @@ func wantBudgetExceeded(t *testing.T, err error) {
 }
 
 func TestBudgetMft1CLUTBomb(t *testing.T) {
-	// 3 input channels, 15 output channels, gridPoints=21 →
-	// 21^3 × 15 = 138,915 float64 entries = 1,111,320 bytes.
+	// 3 input channels, 15 output channels, gridPoints=26 →
+	// 26^3 × 15 = 263,640 float32 entries = 1,054,560 bytes.
 	// newBudget(0) = 1 MiB → CLUT alloc exceeds the budget.
-	data := makeMft1(3, 15, 21)
+	data := makeMft1(3, 15, 26)
 	_, err := decodeLUT8(newBudget(0), data)
 	wantBudgetExceeded(t, err)
 }
@@ -135,9 +135,9 @@ func TestBudgetMft1Fits(t *testing.T) {
 }
 
 func TestBudgetMft2CLUTBomb(t *testing.T) {
-	// 3 input channels, 15 output channels, gridPoints=21 →
-	// CLUT entries 138,915 × 8 bytes = 1.06 MiB exceeds 1 MiB base.
-	data := makeMft2(3, 15, 21, 2, 2)
+	// 3 input channels, 15 output channels, gridPoints=26 →
+	// CLUT entries 263,640 × 4 bytes = 1.01 MiB exceeds 1 MiB base.
+	data := makeMft2(3, 15, 26, 2, 2)
 	_, err := decodeLUT16(newBudget(0), data)
 	wantBudgetExceeded(t, err)
 }
@@ -150,9 +150,9 @@ func TestBudgetMft2Fits(t *testing.T) {
 }
 
 func TestBudgetMABCLUTBomb(t *testing.T) {
-	// 3 input channels, 15 output channels, gridPoints=21 →
-	// CLUT entries 138,915 × 8 bytes = 1.06 MiB exceeds 1 MiB base.
-	data := makeMABCLUT(3, 15, 21)
+	// 3 input channels, 15 output channels, gridPoints=26 →
+	// CLUT entries 263,640 × 4 bytes = 1.01 MiB exceeds 1 MiB base.
+	data := makeMABCLUT(3, 15, 26)
 	_, _, _, err := decodeCLUT(newBudget(0), data, 0, 3, 15)
 	wantBudgetExceeded(t, err)
 }

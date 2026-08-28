@@ -166,16 +166,16 @@ func TestTetrahedralInterp3D(t *testing.T) {
 	// simple 2x2x2 identity CLUT (output = input)
 	gridSize := 2
 	outChannels := 3
-	clut := make([]float64, gridSize*gridSize*gridSize*outChannels)
+	clut := make([]float32, gridSize*gridSize*gridSize*outChannels)
 
 	// fill CLUT with identity mapping
 	for r := range gridSize {
 		for g := range gridSize {
 			for b := range gridSize {
 				idx := (r*gridSize*gridSize + g*gridSize + b) * outChannels
-				clut[idx+0] = float64(r) / float64(gridSize-1)
-				clut[idx+1] = float64(g) / float64(gridSize-1)
-				clut[idx+2] = float64(b) / float64(gridSize-1)
+				clut[idx+0] = float32(r) / float32(gridSize-1)
+				clut[idx+1] = float32(g) / float32(gridSize-1)
+				clut[idx+2] = float32(b) / float32(gridSize-1)
 			}
 		}
 	}
@@ -412,8 +412,8 @@ func TestAbsoluteIntentGrayTRC(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rel.Intent() != RelativeColorimetric || abs.Intent() != AbsoluteColorimetric {
-		t.Errorf("intents %v, %v", rel.Intent(), abs.Intent())
+	if rel.Intent != RelativeColorimetric || abs.Intent != AbsoluteColorimetric {
+		t.Errorf("intents %v, %v", rel.Intent, abs.Intent)
 	}
 
 	for _, gray := range []float64{0.25, 0.5, 1.0} {
@@ -689,7 +689,7 @@ func TestSingularMatrixReverseUnavailable(t *testing.T) {
 }
 
 // badLUTTag returns bytes with an unrecognised type signature, so DecodeLUT
-// fails even though detectProfileType keys on the tag's presence alone.
+// fails even though Profile.ProfileType keys on the tag's presence alone.
 func badLUTTag() []byte {
 	return []byte("junkjunk")
 }
@@ -766,15 +766,15 @@ func TestMalformedLUTYieldsZeroOutput(t *testing.T) {
 // the whole tag passes normalised values through unchanged.
 func identityLUT16Tag() []byte {
 	const grid = 2
-	clut := make([]float64, grid*grid*grid*3)
+	clut := make([]float32, grid*grid*grid*3)
 	for r := range grid {
 		for g := range grid {
 			for b := range grid {
 				// the first channel varies slowest
 				base := ((r*grid+g)*grid + b) * 3
-				clut[base+0] = float64(r)
-				clut[base+1] = float64(g)
-				clut[base+2] = float64(b)
+				clut[base+0] = float32(r)
+				clut[base+1] = float32(g)
+				clut[base+2] = float32(b)
 			}
 		}
 	}

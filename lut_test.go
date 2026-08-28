@@ -17,6 +17,7 @@
 package icc
 
 import (
+	"bytes"
 	"math"
 	"testing"
 )
@@ -232,14 +233,14 @@ func TestLUTAToBApplyWithMCurves(t *testing.T) {
 
 	// build identity CLUT
 	clutSize := 2 * 2 * 2 * 3
-	lut.clut = make([]float64, clutSize)
+	lut.clut = make([]float32, clutSize)
 	for r := range 2 {
 		for g := range 2 {
 			for b := range 2 {
 				idx := (r*4 + g*2 + b) * 3
-				lut.clut[idx+0] = float64(r)
-				lut.clut[idx+1] = float64(g)
-				lut.clut[idx+2] = float64(b)
+				lut.clut[idx+0] = float32(r)
+				lut.clut[idx+1] = float32(g)
+				lut.clut[idx+2] = float32(b)
 			}
 		}
 	}
@@ -348,15 +349,15 @@ func TestMatrix3x4Identity(t *testing.T) {
 
 func TestLUTAToBOrder(t *testing.T) {
 	// test LUTAToB processing order: ACurves → CLUT → MCurves → Matrix → BCurves
-	buildIdentityCLUT := func() []float64 {
-		clut := make([]float64, 2*2*2*3)
+	buildIdentityCLUT := func() []float32 {
+		clut := make([]float32, 2*2*2*3)
 		for r := range 2 {
 			for g := range 2 {
 				for b := range 2 {
 					idx := (r*4 + g*2 + b) * 3
-					clut[idx+0] = float64(r)
-					clut[idx+1] = float64(g)
-					clut[idx+2] = float64(b)
+					clut[idx+0] = float32(r)
+					clut[idx+1] = float32(g)
+					clut[idx+2] = float32(b)
 				}
 			}
 		}
@@ -398,15 +399,15 @@ func TestLUTAToBOrder(t *testing.T) {
 
 func TestLUTBToAOrder(t *testing.T) {
 	// test LUTBToA processing order: BCurves → Matrix → MCurves → CLUT → ACurves
-	buildIdentityCLUT := func() []float64 {
-		clut := make([]float64, 2*2*2*3)
+	buildIdentityCLUT := func() []float32 {
+		clut := make([]float32, 2*2*2*3)
 		for r := range 2 {
 			for g := range 2 {
 				for b := range 2 {
 					idx := (r*4 + g*2 + b) * 3
-					clut[idx+0] = float64(r)
-					clut[idx+1] = float64(g)
-					clut[idx+2] = float64(b)
+					clut[idx+0] = float32(r)
+					clut[idx+1] = float32(g)
+					clut[idx+2] = float32(b)
 				}
 			}
 		}
@@ -449,15 +450,15 @@ func TestLUTBToAOrder(t *testing.T) {
 func TestLUTAToBVsLUTBToADifferentOrder(t *testing.T) {
 	// verify that LUTAToB and LUTBToA produce different results
 	// with the same components, proving different processing order
-	buildIdentityCLUT := func() []float64 {
-		clut := make([]float64, 2*2*2*3)
+	buildIdentityCLUT := func() []float32 {
+		clut := make([]float32, 2*2*2*3)
 		for r := range 2 {
 			for g := range 2 {
 				for b := range 2 {
 					idx := (r*4 + g*2 + b) * 3
-					clut[idx+0] = float64(r)
-					clut[idx+1] = float64(g)
-					clut[idx+2] = float64(b)
+					clut[idx+0] = float32(r)
+					clut[idx+1] = float32(g)
+					clut[idx+2] = float32(b)
 				}
 			}
 		}
@@ -509,16 +510,16 @@ func TestLUTAToBVsLUTBToADifferentOrder(t *testing.T) {
 
 // LUT round-trip tests
 
-func buildIdentityCLUT3D(gridPoints int, outputChannels int) []float64 {
+func buildIdentityCLUT3D(gridPoints int, outputChannels int) []float32 {
 	size := gridPoints * gridPoints * gridPoints * outputChannels
-	clut := make([]float64, size)
+	clut := make([]float32, size)
 	for r := range gridPoints {
 		for g := range gridPoints {
 			for b := range gridPoints {
 				idx := (r*gridPoints*gridPoints + g*gridPoints + b) * outputChannels
-				clut[idx+0] = float64(r) / float64(gridPoints-1)
-				clut[idx+1] = float64(g) / float64(gridPoints-1)
-				clut[idx+2] = float64(b) / float64(gridPoints-1)
+				clut[idx+0] = float32(r) / float32(gridPoints-1)
+				clut[idx+1] = float32(g) / float32(gridPoints-1)
+				clut[idx+2] = float32(b) / float32(gridPoints-1)
 			}
 		}
 	}
@@ -794,5 +795,110 @@ func FuzzLUTRoundTrip(f *testing.F) {
 				}
 			}
 		}
+	})
+}
+
+// wantSameBytes fails the test unless got and want hold the same bytes,
+// reporting the first difference.
+func wantSameBytes(t *testing.T, got, want []byte) {
+	t.Helper()
+	if bytes.Equal(got, want) {
+		return
+	}
+	if len(got) != len(want) {
+		t.Fatalf("encoded %d bytes, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("byte %d: got %d, want %d", i, got[i], want[i])
+		}
+	}
+}
+
+// TestCLUTByteRoundTrip checks that decoding a CLUT and encoding it again
+// reproduces the original bytes exactly, for every 8-bit sample value and
+// every 16-bit one.  The table is held as float32, which represents every
+// n/255 and n/65535 a profile can hold, so storage loses nothing; the encoder
+// must round rather than truncate for that to survive the return trip.
+func TestCLUTByteRoundTrip(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		precision  int
+		gridPoints []int
+		values     int
+	}{
+		{"8-bit", 1, []int{16, 16}, 256},
+		{"16-bit", 2, []int{16, 16, 16, 16}, 65536},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			block := make([]byte, 20+tc.values*tc.precision)
+			for d, g := range tc.gridPoints {
+				block[d] = byte(g)
+			}
+			block[16] = byte(tc.precision)
+			for i := range tc.values {
+				if tc.precision == 1 {
+					block[20+i] = byte(i)
+				} else {
+					putUint16(block, 20+i*2, uint16(i))
+				}
+			}
+
+			gridPoints, clut, precision, err := decodeCLUT(newBudget(0), block, 0,
+				len(tc.gridPoints), 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if precision != tc.precision {
+				t.Fatalf("precision = %d, want %d", precision, tc.precision)
+			}
+
+			got := encodeCLUT(gridPoints, 1, clut, precision)
+			wantSameBytes(t, got, block)
+		})
+	}
+}
+
+// TestLUTTagByteRoundTrip decodes a whole mft1/mft2 tag and encodes it again,
+// demanding the tag come back byte for byte.  This covers the input and output
+// tables as well as the CLUT: all three quantise a [0,1] value to an integer on
+// the way out, and all three need round-to-nearest rather than truncation to
+// reproduce the value they were decoded from.
+func TestLUTTagByteRoundTrip(t *testing.T) {
+	t.Run("mft1", func(t *testing.T) {
+		const nIn, nOut, grid = 3, 3, 5
+		data := makeMft1(nIn, nOut, grid)
+		// fill every table and CLUT byte with a varying pattern
+		for i := 48; i < len(data); i++ {
+			data[i] = byte(i * 7)
+		}
+
+		lut, err := decodeLUT8(newBudget(0), data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := lut.Encode()
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantSameBytes(t, got, data)
+	})
+
+	t.Run("mft2", func(t *testing.T) {
+		const nIn, nOut, grid, entries = 3, 3, 5, 256
+		data := makeMft2(nIn, nOut, grid, entries, entries)
+		for i := 52; i < len(data); i++ {
+			data[i] = byte(i * 7)
+		}
+
+		lut, err := decodeLUT16(newBudget(0), data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := lut.Encode()
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantSameBytes(t, got, data)
 	})
 }

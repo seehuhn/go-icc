@@ -19,10 +19,10 @@ package main
 import (
 	"flag"
 	"fmt"
+	"maps"
 	"os"
 	"slices"
 
-	"maps"
 	"seehuhn.de/go/icc"
 )
 

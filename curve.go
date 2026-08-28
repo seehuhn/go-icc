@@ -564,3 +564,15 @@ func clamp(v, lo, hi float64) float64 {
 	}
 	return v
 }
+
+// quantise8 converts a normalised value to an 8-bit sample, clamping to
+// [0, 1] and rounding to the nearest representable value.
+func quantise8(v float64) byte {
+	return byte(clamp(v, 0, 1)*255.0 + 0.5)
+}
+
+// quantise16 converts a normalised value to a 16-bit sample, clamping to
+// [0, 1] and rounding to the nearest representable value.
+func quantise16(v float64) uint16 {
+	return uint16(clamp(v, 0, 1)*65535.0 + 0.5)
+}

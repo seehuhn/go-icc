@@ -21,13 +21,15 @@ package icc
 // The input r, g, b values are in [0, 1]. The clut contains flattened data with
 // outChannels values per grid point; gridSize is the number of grid points per
 // dimension (same for all three).
-func tetrahedralInterp3DInto(clut []float64, gridSize int, outChannels int, r, g, b float64, out []float64) {
+func tetrahedralInterp3DInto(clut []float32, gridSize int, outChannels int, r, g, b float64, out []float64) {
 	if gridSize < 2 {
 		for i := range outChannels {
 			out[i] = 0
 		}
 		if len(clut) >= outChannels {
-			copy(out[:outChannels], clut[:outChannels])
+			for i := range outChannels {
+				out[i] = float64(clut[i])
+			}
 		}
 		return
 	}
@@ -96,52 +98,52 @@ func tetrahedralInterp3DInto(clut []float64, gridSize int, outChannels int, r, g
 		if fg > fb {
 			// fr > fg > fb: tetrahedron 1
 			for i := range outChannels {
-				out[i] = (1-fr)*clut[c000+i] +
-					(fr-fg)*clut[c100+i] +
-					(fg-fb)*clut[c110+i] +
-					fb*clut[c111+i]
+				out[i] = (1-fr)*float64(clut[c000+i]) +
+					(fr-fg)*float64(clut[c100+i]) +
+					(fg-fb)*float64(clut[c110+i]) +
+					fb*float64(clut[c111+i])
 			}
 		} else if fr > fb {
 			// fr > fb >= fg: tetrahedron 2
 			for i := range outChannels {
-				out[i] = (1-fr)*clut[c000+i] +
-					(fr-fb)*clut[c100+i] +
-					(fb-fg)*clut[c101+i] +
-					fg*clut[c111+i]
+				out[i] = (1-fr)*float64(clut[c000+i]) +
+					(fr-fb)*float64(clut[c100+i]) +
+					(fb-fg)*float64(clut[c101+i]) +
+					fg*float64(clut[c111+i])
 			}
 		} else {
 			// fb >= fr > fg: tetrahedron 3
 			for i := range outChannels {
-				out[i] = (1-fb)*clut[c000+i] +
-					(fb-fr)*clut[c001+i] +
-					(fr-fg)*clut[c101+i] +
-					fg*clut[c111+i]
+				out[i] = (1-fb)*float64(clut[c000+i]) +
+					(fb-fr)*float64(clut[c001+i]) +
+					(fr-fg)*float64(clut[c101+i]) +
+					fg*float64(clut[c111+i])
 			}
 		}
 	} else {
 		if fr > fb {
 			// fg >= fr > fb: tetrahedron 4
 			for i := range outChannels {
-				out[i] = (1-fg)*clut[c000+i] +
-					(fg-fr)*clut[c010+i] +
-					(fr-fb)*clut[c110+i] +
-					fb*clut[c111+i]
+				out[i] = (1-fg)*float64(clut[c000+i]) +
+					(fg-fr)*float64(clut[c010+i]) +
+					(fr-fb)*float64(clut[c110+i]) +
+					fb*float64(clut[c111+i])
 			}
 		} else if fg > fb {
 			// fg > fb >= fr: tetrahedron 5
 			for i := range outChannels {
-				out[i] = (1-fg)*clut[c000+i] +
-					(fg-fb)*clut[c010+i] +
-					(fb-fr)*clut[c011+i] +
-					fr*clut[c111+i]
+				out[i] = (1-fg)*float64(clut[c000+i]) +
+					(fg-fb)*float64(clut[c010+i]) +
+					(fb-fr)*float64(clut[c011+i]) +
+					fr*float64(clut[c111+i])
 			}
 		} else {
 			// fb >= fg >= fr: tetrahedron 6
 			for i := range outChannels {
-				out[i] = (1-fb)*clut[c000+i] +
-					(fb-fg)*clut[c001+i] +
-					(fg-fr)*clut[c011+i] +
-					fr*clut[c111+i]
+				out[i] = (1-fb)*float64(clut[c000+i]) +
+					(fb-fg)*float64(clut[c001+i]) +
+					(fg-fr)*float64(clut[c011+i]) +
+					fr*float64(clut[c111+i])
 			}
 		}
 	}
@@ -158,7 +160,7 @@ func tetrahedralInterp3DInto(clut []float64, gridSize int, outChannels int, r, g
 // weights as successive differences of the sorted fractions. Only the n+1 vertices
 // of that simplex are read, versus the 2^n corners of multilinear interpolation.
 // For n = 3 this is identical to [tetrahedralInterp3DInto].
-func simplexInterpInto(clut []float64, gridPoints, strides []int, outChannels int, input, out []float64, indices, order []int, fracs []float64) {
+func simplexInterpInto(clut []float32, gridPoints, strides []int, outChannels int, input, out []float64, indices, order []int, fracs []float64) {
 	nDims := len(gridPoints)
 	if nDims == 0 || len(input) != nDims {
 		for i := range outChannels {
@@ -209,7 +211,7 @@ func simplexInterpInto(clut []float64, gridPoints, strides []int, outChannels in
 	w := 1 - fracs[order[0]]
 	for i := range outChannels {
 		if off+i < len(clut) {
-			out[i] += w * clut[off+i]
+			out[i] += w * float64(clut[off+i])
 		}
 	}
 	for k := range nDims {
@@ -221,7 +223,7 @@ func simplexInterpInto(clut []float64, gridPoints, strides []int, outChannels in
 		}
 		for i := range outChannels {
 			if off+i < len(clut) {
-				out[i] += w * clut[off+i]
+				out[i] += w * float64(clut[off+i])
 			}
 		}
 	}
