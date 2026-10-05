@@ -21,31 +21,13 @@ import (
 	"testing"
 )
 
-// graySampledProfile builds an in-memory gray profile whose tone curve is a
-// sampled (table) curve, so that PCSToDevice conversion goes through
-// Curve.invertSampled (which caches an inverse table on first use).
-func graySampledProfile() *Profile {
-	tbl := make([]uint16, 512)
-	for i := range tbl {
-		tbl[i] = uint16(i * 128)
-	}
-	return &Profile{
-		ColorSpace: GraySpace,
-		PCS:        PCSXYZSpace,
-		TagData: map[TagType][]byte{
-			GrayTRC: (&Curve{Table: tbl}).Encode(),
-		},
-	}
-}
-
 // TestSharedTransformConcurrent checks that a single bidirectional Transform may
 // be used from several goroutines at once, each with its own Workspace, with
 // both directions exercised concurrently. Run with -race to catch unsynchronised
-// lazy state: the per-direction fwdOnce/revOnce builds and a Curve's cached
-// inverse table.
+// lazy state: the per-direction fwdOnce/revOnce builds.
 func TestSharedTransformConcurrent(t *testing.T) {
 	t.Run("grayTRC", func(t *testing.T) {
-		tr, err := NewTransform(graySampledProfile(), Perceptual)
+		tr, err := NewTransform(makeGrayProfile(2.2, PCSWhitePoint), Perceptual)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -57,7 +39,7 @@ func TestSharedTransformConcurrent(t *testing.T) {
 				for i := range 20000 {
 					f := float64((i+g)%101) / 100
 					tr.ToXYZ([]float64{f}, ws)   // first-use forward
-					tr.FromXYZ(0, f, 0, dst, ws) // first-use reverse (prepareInverse)
+					tr.FromXYZ(0, f, 0, dst, ws) // first-use reverse
 				}
 			})
 		}

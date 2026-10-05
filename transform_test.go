@@ -19,6 +19,8 @@ package icc
 import (
 	"math"
 	"testing"
+
+	"github.com/google/go-cmp/cmp"
 )
 
 func TestCurveGamma(t *testing.T) {
@@ -32,6 +34,8 @@ func TestCurveGamma(t *testing.T) {
 		{2.2, 0.5, 0.2176},
 		{2.2, 0.0, 0.0},
 		{2.2, 1.0, 1.0},
+		{0.0, 0.0, 1.0},
+		{0.0, 0.5, 1.0},
 	}
 
 	for _, tt := range tests {
@@ -39,6 +43,19 @@ func TestCurveGamma(t *testing.T) {
 		got := c.Evaluate(tt.input)
 		if math.Abs(got-tt.want) > 0.001 {
 			t.Errorf("Gamma %.1f: Evaluate(%.2f) = %.4f, want %.4f",
+				tt.gamma, tt.input, got, tt.want)
+		}
+
+		data, err := c.Encode()
+		if err != nil {
+			t.Fatal(err)
+		}
+		decoded, err := DecodeCurve(data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := decoded.Evaluate(tt.input); math.Abs(got-tt.want) > 0.001 {
+			t.Errorf("Gamma %.1f: decoded Evaluate(%.2f) = %.4f, want %.4f",
 				tt.gamma, tt.input, got, tt.want)
 		}
 	}
@@ -142,6 +159,269 @@ func TestCurveSampledInvert(t *testing.T) {
 	}
 }
 
+// TestCurveInverse checks that Invert is a generalised inverse of Evaluate
+// for monotone curves of every kind: for each y, the curve passes through y
+// within distance dx of Invert(y).  Curves which map [0, 1] one-to-one onto
+// [0, 1] must also satisfy Invert(Evaluate(x)) = x and Evaluate(Invert(y)) = y.
+func TestCurveInverse(t *testing.T) {
+	// rounding makes the first two entries 0, so this curve is not one-to-one
+	gamma22 := make([]uint16, 256)
+	for i := range gamma22 {
+		// rounding makes the first two entries 0, so the curve is not one-to-one
+		gamma22[i] = uint16(math.Round(math.Pow(float64(i)/255, 2.2) * 65535))
+	}
+
+	// sRGB parameters
+	const (
+		sg = 2.4
+		sa = 1 / 1.055
+		sb = 0.055 / 1.055
+		sc = 1 / 12.92
+		sd = 0.04045
+	)
+
+	tests := []struct {
+		name       string
+		curve      *Curve
+		decreasing bool
+		bijective  bool
+		dx, dy     float64 // tolerances in input and output space
+	}{
+		{"gamma 1", &Curve{Gamma: 1}, false, true, 1e-9, 1e-9},
+		{"gamma 2.2", &Curve{Gamma: 2.2}, false, true, 1e-9, 1e-9},
+		{"gamma 0.45", &Curve{Gamma: 0.45}, false, true, 1e-9, 1e-9},
+		{"gamma 0", &Curve{Gamma: 0}, false, false, 1e-9, 1e-9},
+		{"type 0", &Curve{Params: []float64{2.4}}, false, true, 1e-9, 1e-9},
+		{"type 1", &Curve{Params: []float64{2, 1.5, -0.5}}, false, false, 1e-9, 1e-9},
+		{"type 2", &Curve{Params: []float64{1, 0.5, 0, 0.25}}, false, false, 1e-9, 1e-9},
+		{"type 3 sRGB", &Curve{Params: []float64{sg, sa, sb, sc, sd}}, false, true, 1e-9, 1e-9},
+		{"type 3 jump", &Curve{Params: []float64{1, 1, 0, 0.5, 0.5}}, false, false, 1e-9, 1e-9},
+		{"type 4 offsets", &Curve{Params: []float64{2.2, 0.9, 0.1, 0.2, 0.1, 0, 0.0059}}, false, false, 1e-9, 1e-9},
+		{"type 4 jump", &Curve{Params: []float64{1, 0.5, 0, 0.5, 0.5, 0.5, 0}}, false, false, 1e-9, 1e-9},
+		{"type 0 g=0", &Curve{Params: []float64{0}}, false, false, 1e-9, 1e-9},
+		{"type 2 g=0", &Curve{Params: []float64{0, 2, -0.5, -0.5}}, false, false, 1e-9, 1e-9},
+		{"type 4 g=0", &Curve{Params: []float64{0, 1, -0.25, 0.5, 0.25, -0.2, 0}}, false, false, 1e-9, 1e-9},
+		{"type 2 a=0", &Curve{Params: []float64{1, 0, 0.5, 0}}, false, false, 1e-9, 1e-9},
+		{"type 4 a=0", &Curve{Params: []float64{2, 0, 0.5, 1, 0.25, 0.25, 0}}, false, false, 1e-9, 1e-9},
+		{"sampled linear", &Curve{Table: []uint16{0, 65535}}, false, true, 1e-6, 1e-6},
+		{"sampled gamma 2.2", &Curve{Table: gamma22}, false, false, 1e-6, 1e-6},
+		{"sampled flat", &Curve{Table: []uint16{0, 0, 32768, 65535}}, false, false, 1e-6, 1e-6},
+		{"sampled decreasing", &Curve{Table: []uint16{65535, 0}}, true, true, 1e-6, 1e-6},
+	}
+
+	const n = 1000
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := tt.curve
+			for i := range n + 1 {
+				y := float64(i) / n
+				x := c.Invert(y)
+				if !(x >= 0 && x <= 1) {
+					t.Fatalf("Invert(%g) = %g, outside [0, 1]", y, x)
+				}
+
+				// the curve must pass through y between x-dx and x+dx
+				left, right := y+tt.dy, y-tt.dy
+				if tt.decreasing {
+					left, right = right, left
+				}
+				if x-tt.dx >= 0 {
+					v := c.Evaluate(x - tt.dx)
+					if tt.decreasing && v < left || !tt.decreasing && v > left {
+						t.Fatalf("Invert(%g) = %g, but Evaluate(%g) = %g", y, x, x-tt.dx, v)
+					}
+				}
+				if x+tt.dx <= 1 {
+					v := c.Evaluate(x + tt.dx)
+					if tt.decreasing && v > right || !tt.decreasing && v < right {
+						t.Fatalf("Invert(%g) = %g, but Evaluate(%g) = %g", y, x, x+tt.dx, v)
+					}
+				}
+
+				if !tt.bijective {
+					continue
+				}
+				if got := c.Evaluate(x); math.Abs(got-y) > tt.dy {
+					t.Fatalf("Evaluate(Invert(%g)) = %g", y, got)
+				}
+				x = y
+				if got := c.Invert(c.Evaluate(x)); math.Abs(got-x) > tt.dx {
+					t.Fatalf("Invert(Evaluate(%g)) = %g", x, got)
+				}
+			}
+		})
+	}
+}
+
+// TestCurveZeroExponent checks that a zero exponent makes the power term
+// equal to 1 wherever it applies, including at base 0, and that Invert
+// returns the smallest input which reaches the output.
+func TestCurveZeroExponent(t *testing.T) {
+	tests := []struct {
+		name  string
+		curve *Curve
+		x, y  float64 // Evaluate(x) = y
+		inv   float64 // Invert(y)
+	}{
+		{"gamma at 0", &Curve{Gamma: 0}, 0, 1, 0},
+		{"gamma at 1", &Curve{Gamma: 0}, 1, 1, 0},
+		{"type 0 at 0", &Curve{Params: []float64{0}}, 0, 1, 0},
+		{"type 1 below step", &Curve{Params: []float64{0, 2, -0.5}}, 0.2, 0, 0},
+		{"type 1 at step", &Curve{Params: []float64{0, 2, -0.5}}, 0.25, 1, 0.25},
+		{"type 2 at step", &Curve{Params: []float64{0, 2, -0.5, -0.5}}, 0.25, 0.5, 0.25},
+		{"type 3 at base 0", &Curve{Params: []float64{0, 1, -0.5, 0, 0.25}}, 0.5, 1, 0.5},
+		{"type 4 at d", &Curve{Params: []float64{0, 1, 0, 0.5, 0.25, -0.2, 0}}, 0.25, 0.8, 0.25},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.curve.Evaluate(tt.x); math.Abs(got-tt.y) > 1e-12 {
+				t.Errorf("Evaluate(%g) = %g, want %g", tt.x, got, tt.y)
+			}
+			if got := tt.curve.Invert(tt.y); math.Abs(got-tt.inv) > 1e-12 {
+				t.Errorf("Invert(%g) = %g, want %g", tt.y, got, tt.inv)
+			}
+		})
+	}
+}
+
+// TestCurveInvertFlat checks Invert for parametric curves with a = 0, where
+// the power term is constant: an output above the constant is never reached,
+// so Invert returns 1.
+func TestCurveInvertFlat(t *testing.T) {
+	// constant 0.5
+	type2 := &Curve{Params: []float64{1, 0, 0.5, 0}}
+	// constant 0 (b < 0 means the power segment never applies)
+	type1 := &Curve{Params: []float64{1, 0, -0.5}}
+	// y = x below 0.25, then 0.5^2 + 0.25 = 0.5
+	type4 := &Curve{Params: []float64{2, 0, 0.5, 1, 0.25, 0.25, 0}}
+	// y = 0.5x below 0.25, then 0.5^2 = 0.25
+	type3 := &Curve{Params: []float64{2, 0, 0.5, 0.5, 0.25}}
+
+	tests := []struct {
+		name  string
+		curve *Curve
+		y     float64
+		want  float64
+	}{
+		{"type 2 below", type2, 0.3, 0},
+		{"type 2 at", type2, 0.5, 0},
+		{"type 2 above", type2, 0.8, 1},
+		{"type 1 zero", type1, 0, 0},
+		{"type 1 above", type1, 0.1, 1},
+		{"type 4 linear", type4, 0.2, 0.2},
+		{"type 4 jump", type4, 0.4, 0.25},
+		{"type 4 at", type4, 0.5, 0.25},
+		{"type 4 above", type4, 0.6, 1},
+		{"type 3 jump", type3, 0.2, 0.25},
+		{"type 3 above", type3, 0.3, 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.curve.Invert(tt.y); math.Abs(got-tt.want) > 1e-12 {
+				t.Errorf("Invert(%g) = %g, want %g", tt.y, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestCurvePrecedence checks that Evaluate and Encode agree on which field
+// defines a curve when several are set: Table, then Params, then Gamma.
+func TestCurvePrecedence(t *testing.T) {
+	tests := []struct {
+		name  string
+		curve *Curve
+		want  *Curve
+	}{
+		{"table over params",
+			&Curve{Gamma: 2, Params: []float64{1}, Table: []uint16{0, 0}},
+			&Curve{Table: []uint16{0, 0}}},
+		{"table over gamma",
+			&Curve{Gamma: 2, Table: []uint16{0, 65535}},
+			&Curve{Table: []uint16{0, 65535}}},
+		{"params over gamma",
+			&Curve{Gamma: 2, Params: []float64{1}},
+			&Curve{Params: []float64{1}}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data, err := tt.curve.Encode()
+			if err != nil {
+				t.Fatal(err)
+			}
+			decoded, err := DecodeCurve(data)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if diff := cmp.Diff(tt.want, decoded); diff != "" {
+				t.Errorf("round trip failed (-want +got):\n%s", diff)
+			}
+			for i := range 11 {
+				x := float64(i) / 10
+				want := tt.want.Evaluate(x)
+				if got := tt.curve.Evaluate(x); got != want {
+					t.Errorf("Evaluate(%g) = %g, want %g", x, got, want)
+				}
+				if got := decoded.Evaluate(x); got != want {
+					t.Errorf("decoded Evaluate(%g) = %g, want %g", x, got, want)
+				}
+			}
+		})
+	}
+}
+
+// TestEncodeParamsRound checks that parametric curve coefficients are rounded
+// to the nearest multiple of 1/65536, and that the extremes of the range
+// are accepted.
+func TestEncodeParamsRound(t *testing.T) {
+	params := []float64{100.7 / 65536, -100.7 / 65536, -32768, 32767.99999}
+	want := []float64{101.0 / 65536, -101.0 / 65536, -32768, 32768 - 1.0/65536}
+	for i, v := range params {
+		data, err := (&Curve{Params: []float64{v}}).Encode()
+		if err != nil {
+			t.Fatalf("Encode(%g): %v", v, err)
+		}
+		decoded, err := DecodeCurve(data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := decoded.Params[0]; got != want[i] {
+			t.Errorf("coefficient %g encoded as %g, want %g", v, got, want[i])
+		}
+	}
+}
+
+// TestCurveEncodeInvalid checks that Encode rejects curves which have no
+// ICC representation.
+func TestCurveEncodeInvalid(t *testing.T) {
+	tests := []struct {
+		name  string
+		curve *Curve
+	}{
+		{"empty table", &Curve{Table: []uint16{}}},
+		{"one-entry table", &Curve{Table: []uint16{65535}}},
+		{"two params", &Curve{Params: []float64{1, 2}}},
+		{"six params", &Curve{Params: []float64{1, 2, 3, 4, 5, 6}}},
+		{"negative gamma", &Curve{Gamma: -1}},
+		{"large gamma", &Curve{Gamma: 65535.5 / 256}},
+		{"NaN gamma", &Curve{Gamma: math.NaN()}},
+		{"large coefficient", &Curve{Params: []float64{32768}}},
+		{"small coefficient", &Curve{Params: []float64{-32768.00001}}},
+		{"NaN coefficient", &Curve{Params: []float64{2.2, math.NaN(), 0}}},
+		{"infinite coefficient", &Curve{Params: []float64{math.Inf(1)}}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := tt.curve.Encode(); err == nil {
+				t.Error("expected an error")
+			}
+		})
+	}
+}
+
 func TestCurveIdentity(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -152,6 +432,11 @@ func TestCurveIdentity(t *testing.T) {
 		{"gamma 2.2", &Curve{Gamma: 2.2}, false},
 		{"type 0 gamma 1.0", &Curve{Params: []float64{1.0}}, true},
 		{"type 0 gamma 2.2", &Curve{Params: []float64{2.2}}, false},
+		{"table linear", &Curve{Table: []uint16{0, 65535}}, true},
+		{"table linear 4", &Curve{Table: []uint16{0, 21845, 43690, 65535}}, true},
+		{"table rounded", &Curve{Table: []uint16{0, 32768, 65535}}, false},
+		{"table over params", &Curve{Params: []float64{1}, Table: []uint16{0, 0}}, false},
+		{"params over gamma", &Curve{Gamma: 1, Params: []float64{2.2}}, false},
 	}
 
 	for _, tt := range tests {
@@ -327,7 +612,7 @@ func makeGrayProfile(gamma float64, whitePoint [3]float64) *Profile {
 		ColorSpace: GraySpace,
 		PCS:        PCSXYZSpace,
 		TagData: map[TagType][]byte{
-			GrayTRC:         (&Curve{Gamma: gamma}).encodeCurveType(),
+			GrayTRC:         mustEncodeCurve(&Curve{Gamma: gamma}),
 			MediaWhitePoint: encodeXYZTag(whitePoint),
 		},
 	}
@@ -655,7 +940,7 @@ func TestSingularMatrixReverseUnavailable(t *testing.T) {
 		putS15Fixed16(b, 16, z)
 		return b
 	}
-	trc := (&Curve{Gamma: 2.2}).encodeCurveType()
+	trc := mustEncodeCurve(&Curve{Gamma: 2.2})
 
 	// three identical columns => singular matrix => reverse unavailable
 	col := xyzTag(0.5, 0.5, 0.5)
@@ -864,20 +1149,23 @@ func TestLegacyLabClipping(t *testing.T) {
 
 // Gamma is encoded as a u8Fixed8Number (ICC.1:2022 §4.9): round to the nearest
 // 1/256 and clamp to the representable range [0, 255 + 255/256].
-func TestEncodeGammaRoundAndClamp(t *testing.T) {
+func TestEncodeGammaRound(t *testing.T) {
 	tests := []struct {
 		name  string
 		gamma float64
 		want  uint16
 	}{
-		{"rounds up", 100.7 / 256.0, 101},  // 100.7 -> 101, not 100
-		{"common 2.2", 2.2, 563},           // 563.2 -> 563
-		{"clamps overflow", 300.0, 0xFFFF}, // 76800 saturates
-		{"clamps negative", -1.0, 0},       // below range saturates to 0
+		{"rounds up", 100.7 / 256.0, 101}, // 100.7 -> 101, not 100
+		{"common 2.2", 2.2, 563},          // 563.2 -> 563
+		{"largest", 65535.4 / 256.0, 0xFFFF},
+		{"zero", 0, 0},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			buf := (&Curve{Gamma: tc.gamma}).encodeCurveType()
+			buf, err := (&Curve{Gamma: tc.gamma}).Encode()
+			if err != nil {
+				t.Fatal(err)
+			}
 			if len(buf) != 14 {
 				t.Fatalf("encoded length = %d, want 14 (gamma curveType)", len(buf))
 			}

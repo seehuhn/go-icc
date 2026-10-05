@@ -1020,7 +1020,11 @@ func encodeLUTAB(inputChannels, outputChannels int, aCurves []*Curve, gridPoints
 	var bCurveData []byte
 	if len(bCurves) > 0 {
 		bCurveOffset = offset
-		bCurveData = encodeCurves(bCurves, bCurveCount)
+		var err error
+		bCurveData, err = encodeCurves(bCurves, bCurveCount)
+		if err != nil {
+			return nil, err
+		}
 		offset += uint32(len(bCurveData))
 	}
 
@@ -1038,7 +1042,11 @@ func encodeLUTAB(inputChannels, outputChannels int, aCurves []*Curve, gridPoints
 	if len(mCurves) > 0 {
 		offset = align4(offset)
 		mCurveOffset = offset
-		mCurveData = encodeCurves(mCurves, mCurveCount)
+		var err error
+		mCurveData, err = encodeCurves(mCurves, mCurveCount)
+		if err != nil {
+			return nil, err
+		}
 		offset += uint32(len(mCurveData))
 	}
 
@@ -1058,7 +1066,11 @@ func encodeLUTAB(inputChannels, outputChannels int, aCurves []*Curve, gridPoints
 	if len(aCurves) > 0 {
 		offset = align4(offset)
 		aCurveOffset = offset
-		aCurveData = encodeCurves(aCurves, aCurveCount)
+		var err error
+		aCurveData, err = encodeCurves(aCurves, aCurveCount)
+		if err != nil {
+			return nil, err
+		}
 		offset += uint32(len(aCurveData))
 	}
 
@@ -1140,21 +1152,23 @@ func encodeCLUT(gridPoints []int, outputChannels int, clut []float32, precision 
 	return buf
 }
 
-func encodeCurves(curves []*Curve, count int) []byte {
+func encodeCurves(curves []*Curve, count int) ([]byte, error) {
 	var buf []byte
 	for i := range count {
-		var curveData []byte
+		curve := &Curve{Gamma: 1.0}
 		if i < len(curves) && curves[i] != nil {
-			curveData = curves[i].Encode()
-		} else {
-			curveData = (&Curve{Gamma: 1.0}).Encode()
+			curve = curves[i]
+		}
+		curveData, err := curve.Encode()
+		if err != nil {
+			return nil, err
 		}
 		for len(curveData)%4 != 0 {
 			curveData = append(curveData, 0)
 		}
 		buf = append(buf, curveData...)
 	}
-	return buf
+	return buf, nil
 }
 
 func align4(n uint32) uint32 {

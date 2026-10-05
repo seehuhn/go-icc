@@ -17,6 +17,8 @@
 package icc
 
 import (
+	"errors"
+	"fmt"
 	"math"
 	"sort"
 
@@ -24,38 +26,57 @@ import (
 )
 
 // Curve represents a 1D transfer function (TRC) used in ICC profiles.
-// It can represent either an ICC curveType or parametricCurveType.
 //
-// A Curve is not safe for concurrent use. If the same Curve needs to be
-// used from multiple goroutines, callers must provide their own synchronisation.
-//
-// Precedence when evaluating: Table > Params > Gamma.
-//
-// To create a curve:
-//   - Gamma curve (curveType): set Gamma only (e.g. &Curve{Gamma: 2.2})
-//   - Sampled curve (curveType): set Table only
-//   - Parametric curve (parametricCurveType): set Params
+// A Curve is safe for concurrent use.
 type Curve struct {
 	// Gamma specifies the exponent for a simple gamma curve, y = x^Gamma.
-	// Ignored if Params or Table is set.
+	// The zero value gives the constant curve y = 1.
+	//
+	// This value is ignored if either Params or Table is set.
 	Gamma float64
 
-	// Params defines an ICC parametricCurveType. The number of coefficients
-	// selects the ICC function type and the meaning of each coefficient
+	// Params defines an ICC parametricCurveType.  The number of coefficients
+	// determines the ICC function type and the meaning of the coefficients
 	// [g, a, b, c, d, e, f]:
+	//
 	//   - 1 param  (type 0): y = x^g
 	//   - 3 params (type 1): y = (ax+b)^g for x >= -b/a, else y = 0
 	//   - 4 params (type 2): y = (ax+b)^g + c for x >= -b/a, else y = c
 	//   - 5 params (type 3): y = (ax+b)^g for x >= d, else y = cx
 	//   - 7 params (type 4): y = (ax+b)^g + e for x >= d, else y = cx + f
+	//
+	// As for Gamma, 0^0 is taken to be 1, so g = 0 makes the power term
+	// equal to 1 wherever it applies.
+	//
+	// This field is ignored if Table is set.
 	Params []float64
 
-	// Table specifies a sampled curve (curveType with n>1). Values are evenly
-	// spaced from input 0 to 1, with linear interpolation between samples.
+	// Table specifies a sampled curve.  Values are evenly spaced from input 0
+	// to 1, with linear interpolation between samples.
+	// A non-nil Table must have at least two entries.
 	Table []uint16
+}
 
-	// cached inverse table for sampled curves
-	inverseTable []float64
+// curveKind identifies which field of a [Curve] defines the curve.
+type curveKind int
+
+const (
+	curveGamma curveKind = iota
+	curveParametric
+	curveSampled
+)
+
+// kind returns the field which defines the curve.
+// Table takes precedence over Params, and Params over Gamma.
+func (c *Curve) kind() curveKind {
+	switch {
+	case c.Table != nil:
+		return curveSampled
+	case c.Params != nil:
+		return curveParametric
+	default:
+		return curveGamma
+	}
 }
 
 // DecodeCurve decodes a curve from ICC tag data.
@@ -161,26 +182,32 @@ func (c *Curve) Evaluate(x float64) float64 {
 	x = clamp(x, 0, 1)
 
 	var y float64
-
-	// gamma-only curve
-	if c.Gamma != 0 && c.Params == nil && c.Table == nil {
-		if x <= 0 {
-			y = 0
-		} else {
-			y = math.Pow(x, c.Gamma)
-		}
-	} else if c.Params != nil {
-		// parametric curve
-		y = c.evaluateParametric(x)
-	} else if c.Table != nil {
-		// sampled curve
+	switch c.kind() {
+	case curveSampled:
 		y = c.evaluateSampled(x)
-	} else {
-		// identity
-		y = x
+	case curveParametric:
+		y = c.evaluateParametric(x)
+	default:
+		y = math.Pow(x, c.Gamma)
 	}
 
 	return clamp(y, 0, 1)
+}
+
+func (c *Curve) evaluateSampled(x float64) float64 {
+	n := len(c.Table)
+
+	// linear interpolation
+	pos := x * float64(n-1)
+	idx := int(pos)
+	if idx >= n-1 {
+		return float64(c.Table[n-1]) / 65535.0
+	}
+
+	frac := pos - float64(idx)
+	v0 := float64(c.Table[idx]) / 65535.0
+	v1 := float64(c.Table[idx+1]) / 65535.0
+	return v0 + frac*(v1-v0)
 }
 
 func (c *Curve) evaluateParametric(x float64) float64 {
@@ -189,9 +216,6 @@ func (c *Curve) evaluateParametric(x float64) float64 {
 	switch len(c.Params) {
 	case 1:
 		// type 0: y = x^g
-		if x <= 0 {
-			return 0
-		}
 		return math.Pow(x, g)
 
 	case 3:
@@ -200,7 +224,7 @@ func (c *Curve) evaluateParametric(x float64) float64 {
 		threshold := -b / a
 		if x >= threshold {
 			v := a*x + b
-			if v <= 0 {
+			if v < 0 {
 				return 0
 			}
 			return math.Pow(v, g)
@@ -213,7 +237,7 @@ func (c *Curve) evaluateParametric(x float64) float64 {
 		threshold := -b / a
 		if x >= threshold {
 			v := a*x + b
-			if v <= 0 {
+			if v < 0 {
 				return cc
 			}
 			return math.Pow(v, g) + cc
@@ -225,7 +249,7 @@ func (c *Curve) evaluateParametric(x float64) float64 {
 		a, b, cc, d := c.Params[1], c.Params[2], c.Params[3], c.Params[4]
 		if x >= d {
 			v := a*x + b
-			if v <= 0 {
+			if v < 0 {
 				return 0
 			}
 			return math.Pow(v, g)
@@ -237,7 +261,7 @@ func (c *Curve) evaluateParametric(x float64) float64 {
 		a, b, cc, d, e, f := c.Params[1], c.Params[2], c.Params[3], c.Params[4], c.Params[5], c.Params[6]
 		if x >= d {
 			v := a*x + b
-			if v <= 0 {
+			if v < 0 {
 				return e
 			}
 			return math.Pow(v, g) + e
@@ -248,268 +272,205 @@ func (c *Curve) evaluateParametric(x float64) float64 {
 	return x
 }
 
-func (c *Curve) evaluateSampled(x float64) float64 {
-	n := len(c.Table)
-	if n == 0 {
-		return x
-	}
-	if n == 1 {
-		return float64(c.Table[0]) / 65535.0
-	}
-
-	// linear interpolation
-	pos := x * float64(n-1)
-	idx := int(pos)
-	if idx < 0 {
-		return float64(c.Table[0]) / 65535.0
-	}
-	if idx >= n-1 {
-		return float64(c.Table[n-1]) / 65535.0
-	}
-
-	frac := pos - float64(idx)
-	v0 := float64(c.Table[idx]) / 65535.0
-	v1 := float64(c.Table[idx+1]) / 65535.0
-	return v0 + frac*(v1-v0)
-}
-
-// Invert computes the input value for an output value y in [0, 1].
-// This is the inverse of Evaluate.
+// Invert returns an input value x in [0, 1] for an output value y.
+// For an increasing curve, x is the smallest input with Evaluate(x) >= y,
+// or 1 if there is none.  For a decreasing sampled curve, x is the smallest
+// input with Evaluate(x) <= y.  Where Evaluate is one-to-one, Invert is its
+// inverse.
 func (c *Curve) Invert(y float64) float64 {
 	y = clamp(y, 0, 1)
 
-	// gamma-only curve
-	if c.Gamma != 0 && c.Params == nil && c.Table == nil {
-		if y <= 0 {
+	var x float64
+	switch c.kind() {
+	case curveSampled:
+		x = c.invertSampled(y)
+	case curveParametric:
+		x = c.invertParametric(y)
+	default:
+		x = root(y, c.Gamma)
+	}
+
+	return clamp(x, 0, 1)
+}
+
+func (c *Curve) invertSampled(y float64) float64 {
+	tab := c.Table
+	n := len(tab)
+	target := y * 65535
+
+	// sort.Search returns an index where the predicate is false just before
+	// and true at, even for a table which is not monotone, so the
+	// interpolations below never divide by zero.
+	if tab[n-1] >= tab[0] {
+		idx := sort.Search(n, func(j int) bool { return float64(tab[j]) >= target })
+		if idx == 0 {
 			return 0
 		}
-		return math.Pow(y, 1.0/c.Gamma)
+		if idx == n {
+			return 1
+		}
+		v0, v1 := float64(tab[idx-1]), float64(tab[idx])
+		return (float64(idx-1) + (target-v0)/(v1-v0)) / float64(n-1)
 	}
 
-	// parametric curve
-	if c.Params != nil {
-		return c.invertParametric(y)
+	idx := sort.Search(n, func(j int) bool { return float64(tab[j]) <= target })
+	if idx == 0 {
+		return 0
 	}
-
-	// sampled curve
-	if c.Table != nil {
-		return c.invertSampled(y)
+	if idx == n {
+		return 1
 	}
-
-	// identity
-	return y
+	v0, v1 := float64(tab[idx-1]), float64(tab[idx])
+	return (float64(idx-1) + (v0-target)/(v0-v1)) / float64(n-1)
 }
 
 func (c *Curve) invertParametric(y float64) float64 {
-	g := c.Params[0]
-	if g == 0 {
-		return 0
-	}
-	invG := 1.0 / g
+	p := c.Params
+	g := p[0]
 
-	switch len(c.Params) {
+	switch len(p) {
 	case 1:
-		// type 0: y = x^g => x = y^(1/g)
-		if y <= 0 {
-			return 0
-		}
-		return math.Pow(y, invG)
+		// type 0: y = x^g
+		return root(y, g)
 
-	case 3:
-		// type 1: y = (ax+b)^g => x = (y^(1/g) - b) / a
-		a, b := c.Params[1], c.Params[2]
-		if a == 0 {
-			return 0
-		}
-		if y <= 0 {
-			return -b / a
-		}
-		return (math.Pow(y, invG) - b) / a
-
-	case 4:
-		// type 2: y = (ax+b)^g + c => x = ((y-c)^(1/g) - b) / a
-		a, b, cc := c.Params[1], c.Params[2], c.Params[3]
-		if a == 0 {
-			return 0
+	case 3, 4:
+		// types 1 and 2: y = (ax+b)^g + c for x >= -b/a, else y = c
+		a, b := p[1], p[2]
+		var cc float64
+		if len(p) == 4 {
+			cc = p[3]
 		}
 		yc := y - cc
 		if yc <= 0 {
-			return -b / a
-		}
-		return (math.Pow(yc, invG) - b) / a
-
-	case 5:
-		// type 3: y = (ax+b)^g for x >= d, else y = cx
-		a, b, cc, d := c.Params[1], c.Params[2], c.Params[3], c.Params[4]
-		// threshold output is at cc*d
-		yThreshold := cc * d
-		if y < yThreshold {
-			if cc == 0 {
-				return 0
-			}
-			return y / cc
+			return 0
 		}
 		if a == 0 {
-			return d
+			// the curve is constant
+			if c.evaluateParametric(0) >= y {
+				return 0
+			}
+			return 1
 		}
-		if y <= 0 {
-			return d
-		}
-		return (math.Pow(y, invG) - b) / a
+		return (root(yc, g) - b) / a
 
-	case 7:
-		// type 4: y = (ax+b)^g + e for x >= d, else y = cx + f
-		a, b, cc, d, e, f := c.Params[1], c.Params[2], c.Params[3], c.Params[4], c.Params[5], c.Params[6]
-		// threshold output is at cc*d + f
-		yThreshold := cc*d + f
-		if y < yThreshold {
-			if cc == 0 {
+	case 5, 7:
+		// types 3 and 4: y = (ax+b)^g + e for x >= d, else y = cx + f
+		a, b, cc, d := p[1], p[2], p[3], p[4]
+		var e, f float64
+		if len(p) == 7 {
+			e, f = p[5], p[6]
+		}
+		if d > 0 && y <= cc*d+f {
+			// the linear segment reaches y
+			if cc <= 0 {
 				return 0
 			}
 			return (y - f) / cc
 		}
-		if a == 0 {
-			return d
-		}
+		// The power segment only applies from d onwards; this also covers
+		// a jump at d, where the curve passes y without taking the value.
 		ye := y - e
 		if ye <= 0 {
 			return d
 		}
-		return (math.Pow(ye, invG) - b) / a
+		if a == 0 {
+			// the power segment is constant
+			if c.evaluateParametric(max(d, 0)) >= y {
+				return d
+			}
+			return 1
+		}
+		return max(d, (root(ye, g)-b)/a)
 	}
 
 	return y
 }
 
-func (c *Curve) invertSampled(y float64) float64 {
-	// build inverse LUT on first use
-	if c.inverseTable == nil {
-		c.buildInverseTable()
-	}
-
-	n := len(c.inverseTable)
-	if n == 0 {
-		return y
-	}
-
-	// linear interpolation in inverse table
-	pos := y * float64(n-1)
-	idx := int(pos)
-	if idx < 0 {
-		return c.inverseTable[0]
-	}
-	if idx >= n-1 {
-		return c.inverseTable[n-1]
-	}
-
-	frac := pos - float64(idx)
-	return c.inverseTable[idx] + frac*(c.inverseTable[idx+1]-c.inverseTable[idx])
-}
-
-// prepareInverse eagerly builds the cached inverse table used by [Curve.Invert]
-// for sampled curves, so that subsequent Invert calls only read shared state and
-// can run concurrently. It is a no-op for gamma and parametric curves (which
-// invert analytically) and for sampled curves whose table is already built.
-func (c *Curve) prepareInverse() {
-	if c.Table != nil && c.inverseTable == nil {
-		c.buildInverseTable()
-	}
-}
-
-func (c *Curve) buildInverseTable() {
-	const invSize = 4096
-	c.inverseTable = make([]float64, invSize)
-
-	n := len(c.Table)
-	if n == 0 {
-		for i := range c.inverseTable {
-			c.inverseTable[i] = float64(i) / float64(invSize-1)
+// root inverts the power function v -> v^g, returning t^(1/g).
+// For g = 0, where v^g = 1 for every v, it returns the smallest v with
+// v^g >= t: 0 if t <= 1, and +Inf otherwise.
+func root(t, g float64) float64 {
+	if g == 0 {
+		if t <= 1 {
+			return 0
 		}
-		return
+		return math.Inf(1)
 	}
+	return math.Pow(t, 1/g)
+}
 
-	// for each output value, find the corresponding input using binary search
-	for i := range c.inverseTable {
-		target := uint16(float64(i) / float64(invSize-1) * 65535.0)
-
-		// find smallest index where Table[idx] >= target
-		idx := sort.Search(n, func(j int) bool {
-			return c.Table[j] >= target
-		})
-
-		if idx == 0 {
-			// target is at or below the minimum output
-			c.inverseTable[i] = 0
-		} else if idx >= n {
-			// target is above the maximum output
-			c.inverseTable[i] = 1
-		} else {
-			// linear interpolation between idx-1 and idx
-			v0 := float64(c.Table[idx-1])
-			v1 := float64(c.Table[idx])
-			if v1 == v0 {
-				c.inverseTable[i] = float64(idx) / float64(n-1)
-			} else {
-				frac := (float64(target) - v0) / (v1 - v0)
-				c.inverseTable[i] = (float64(idx-1) + frac) / float64(n-1)
+// IsIdentity reports whether the curve is the identity function.
+// Parametric curves are recognised only in their type 0 form.
+func (c *Curve) IsIdentity() bool {
+	switch c.kind() {
+	case curveSampled:
+		n := len(c.Table)
+		for i, v := range c.Table {
+			if uint64(v)*uint64(n-1) != uint64(i)*65535 {
+				return false
 			}
 		}
-	}
-}
-
-// IsIdentity returns true if the curve represents an identity function.
-func (c *Curve) IsIdentity() bool {
-	if c.Gamma == 1.0 && c.Params == nil && c.Table == nil {
 		return true
+	case curveParametric:
+		return len(c.Params) == 1 && c.Params[0] == 1.0
+	default:
+		return c.Gamma == 1.0
 	}
-	if len(c.Params) == 1 && c.Params[0] == 1.0 {
-		return true
-	}
-	return false
 }
 
 // Encode converts the curve to ICC tag data.
-// The result is either a curveType or parametricCurveType element.
-func (c *Curve) Encode() []byte {
-	if c.Params != nil {
+// The result is either a curveType element or parametricCurveType element.
+// An error is returned if Table is non-nil with fewer than two entries, if
+// Params has a length other than 1, 3, 4, 5 or 7, or if a value cannot be
+// represented in the ICC encoding: Gamma must lie in [0, 256) and the
+// coefficients in Params in [-32768, 32768), after rounding to the precision
+// of the encoding.
+func (c *Curve) Encode() ([]byte, error) {
+	switch c.kind() {
+	case curveSampled:
+		return c.encodeSampled()
+	case curveParametric:
 		return c.encodeParametric()
+	default:
+		return c.encodeGamma()
 	}
-	return c.encodeCurveType()
 }
 
-func (c *Curve) encodeCurveType() []byte {
-	if c.Table != nil {
-		// sampled curve
-		n := len(c.Table)
-		buf := make([]byte, 12+n*2)
-		copy(buf[0:4], "curv")
-		putUint32(buf, 8, uint32(n))
-		for i, v := range c.Table {
-			putUint16(buf, 12+i*2, v)
-		}
-		return buf
+func (c *Curve) encodeSampled() ([]byte, error) {
+	n := len(c.Table)
+	if n < 2 {
+		return nil, errors.New("sampled curve needs at least two table entries")
 	}
+	buf := make([]byte, 12+n*2)
+	copy(buf[0:4], "curv")
+	putUint32(buf, 8, uint32(n))
+	for i, v := range c.Table {
+		putUint16(buf, 12+i*2, v)
+	}
+	return buf, nil
+}
 
+func (c *Curve) encodeGamma() ([]byte, error) {
 	if c.Gamma == 1.0 {
 		// identity curve (n=0)
 		buf := make([]byte, 12)
 		copy(buf[0:4], "curv")
-		return buf
+		return buf, nil
 	}
 
-	// gamma curve (n=1)
+	// gamma curve (n=1), as a u8Fixed8Number
+	gamma := math.Round(c.Gamma * 256.0)
+	if !(gamma >= 0 && gamma <= 0xFFFF) {
+		return nil, fmt.Errorf("gamma %g outside the range [0, 256)", c.Gamma)
+	}
 	buf := make([]byte, 14)
 	copy(buf[0:4], "curv")
 	putUint32(buf, 8, 1)
-	// encode gamma as u8Fixed8Number: round to the nearest 1/256 and clamp to
-	// the representable range [0, 255 + 255/256], since the format cannot hold
-	// larger exponents (ICC.1:2022 §4.9, §10.6).
-	gamma := uint16(clamp(math.Round(c.Gamma*256.0), 0, 0xFFFF))
-	putUint16(buf, 12, gamma)
-	return buf
+	putUint16(buf, 12, uint16(gamma))
+	return buf, nil
 }
 
-func (c *Curve) encodeParametric() []byte {
+func (c *Curve) encodeParametric() ([]byte, error) {
 	numParams := len(c.Params)
 	var funcType uint16
 	switch numParams {
@@ -524,7 +485,13 @@ func (c *Curve) encodeParametric() []byte {
 	case 7:
 		funcType = 4
 	default:
-		panic("icc: invalid number of parametric curve coefficients")
+		return nil, fmt.Errorf("invalid number of parametric curve coefficients: %d", numParams)
+	}
+
+	for _, v := range c.Params {
+		if !s15Fixed16InRange(v) {
+			return nil, fmt.Errorf("parametric curve coefficient %g out of range", v)
+		}
 	}
 
 	buf := make([]byte, 12+numParams*4)
@@ -533,7 +500,7 @@ func (c *Curve) encodeParametric() []byte {
 	for i, v := range c.Params {
 		putS15Fixed16(buf, 12+i*4, v)
 	}
-	return buf
+	return buf, nil
 }
 
 func putUint16(data []byte, offset int, value uint16) {
@@ -541,9 +508,17 @@ func putUint16(data []byte, offset int, value uint16) {
 	data[offset+1] = byte(value)
 }
 
+// putS15Fixed16 writes value, rounded to the nearest multiple of 1/65536.
+// The caller must ensure that [s15Fixed16InRange] holds.
 func putS15Fixed16(data []byte, offset int, value float64) {
-	raw := int32(value * 65536.0)
+	raw := int32(math.Round(value * 65536.0))
 	putUint32(data, offset, uint32(raw))
+}
+
+// s15Fixed16InRange reports whether value can be written by [putS15Fixed16].
+func s15Fixed16InRange(value float64) bool {
+	raw := math.Round(value * 65536.0)
+	return raw >= math.MinInt32 && raw <= math.MaxInt32
 }
 
 func getUint16(data []byte, offset int) uint16 {

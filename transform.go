@@ -72,7 +72,7 @@ type Transform struct {
 	// for matrix/TRC profiles (RGB)
 	matrix    []float64 // 3x3 matrix: device RGB to XYZ
 	matrixInv []float64 // inverse matrix: XYZ to device RGB; nil if singular
-	trc       [3]*Curve // R, G, B TRCs (prepareInverse called lazily for reverse)
+	trc       [3]*Curve // R, G, B TRCs
 
 	// for gray TRC profiles
 	grayTRC *Curve
@@ -298,19 +298,12 @@ func (t *Transform) buildForward() {
 	})
 }
 
-// buildReverse decodes the reverse (PCS->device) machinery on first FromXYZ.
-// For matrix/gray profiles this builds the inverse curve tables; a Transform
-// shared across goroutines stays safe because the build runs once.
+// buildReverse decodes the reverse (PCS->device) LUT chain on first FromXYZ.
+// A Transform shared across goroutines stays safe because the build runs once.
+// Matrix/TRC and gray profiles need no preparation.
 func (t *Transform) buildReverse() {
 	t.revOnce.Do(func() {
-		switch t.profileType {
-		case ProfileTypeMatrixTRC:
-			for _, c := range t.trc {
-				c.prepareInverse()
-			}
-		case ProfileTypeGrayTRC:
-			t.grayTRC.prepareInverse()
-		case ProfileTypeLUT:
+		if t.profileType == ProfileTypeLUT {
 			t.revLUT = t.decodeLUTChain(pcsToDevice)
 		}
 	})
@@ -430,14 +423,12 @@ func (t *Transform) matrixTRCToPCS(a, b, c float64) (float64, float64, float64) 
 
 // matrixTRCFromPCS maps PCS XYZ to a device colour triple in [0,1]: apply the
 // inverse matrix, then the inverse TRCs. The caller must ensure the reverse
-// machinery is available (matrixInv != nil) and built (buildReverse).
+// machinery is available (matrixInv != nil).
 func (t *Transform) matrixTRCFromPCS(a, b, c float64) (float64, float64, float64) {
 	r := t.matrixInv[0]*a + t.matrixInv[1]*b + t.matrixInv[2]*c
 	g := t.matrixInv[3]*a + t.matrixInv[4]*b + t.matrixInv[5]*c
 	bl := t.matrixInv[6]*a + t.matrixInv[7]*b + t.matrixInv[8]*c
-	return clamp(t.trc[0].Invert(clamp(r, 0, 1)), 0, 1),
-		clamp(t.trc[1].Invert(clamp(g, 0, 1)), 0, 1),
-		clamp(t.trc[2].Invert(clamp(bl, 0, 1)), 0, 1)
+	return t.trc[0].Invert(r), t.trc[1].Invert(g), t.trc[2].Invert(bl)
 }
 
 // grayTRCToPCS maps a single grey channel to PCS XYZ via the gray TRC.
@@ -450,9 +441,9 @@ func (t *Transform) grayTRCToPCS(in float64) (X, Y, Z float64) {
 }
 
 // grayTRCFromPCS maps PCS Y to a single grey channel via the inverse
-// gray TRC. The caller must ensure the reverse machinery is built (buildReverse).
+// gray TRC.
 func (t *Transform) grayTRCFromPCS(Y float64) float64 {
-	return t.grayTRC.Invert(clamp(Y, 0, 1))
+	return t.grayTRC.Invert(Y)
 }
 
 // ToXYZ converts device colour to PCS XYZ. Input is a normalised [0,1]

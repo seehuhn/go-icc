@@ -274,7 +274,10 @@ func testCurveRoundTrip(t *testing.T, c *Curve) {
 	t.Helper()
 
 	// encode
-	data := c.Encode()
+	data, err := c.Encode()
+	if err != nil {
+		t.Fatalf("encode failed: %v", err)
+	}
 
 	// decode
 	d, err := DecodeCurve(data)
@@ -282,14 +285,18 @@ func testCurveRoundTrip(t *testing.T, c *Curve) {
 		t.Fatalf("decode failed: %v", err)
 	}
 
-	// compare (ignoring cached inverse table)
-	opt := cmp.FilterPath(func(p cmp.Path) bool {
-		return p.Last().String() == ".inverseTable"
-	}, cmp.Ignore())
-
-	if diff := cmp.Diff(c, d, opt); diff != "" {
+	if diff := cmp.Diff(c, d); diff != "" {
 		t.Errorf("round-trip mismatch (-want +got):\n%s", diff)
 	}
+}
+
+// mustEncodeCurve encodes a curve, panicking on error.
+func mustEncodeCurve(c *Curve) []byte {
+	data, err := c.Encode()
+	if err != nil {
+		panic(err)
+	}
+	return data
 }
 
 func TestCurveRoundTrip(t *testing.T) {
@@ -303,7 +310,7 @@ func TestCurveRoundTrip(t *testing.T) {
 func FuzzCurveRoundTrip(f *testing.F) {
 	// seed corpus with test cases
 	for _, tc := range curveTestCases {
-		f.Add(tc.Curve.Encode())
+		f.Add(mustEncodeCurve(tc.Curve))
 	}
 
 	f.Fuzz(func(t *testing.T, data []byte) {
