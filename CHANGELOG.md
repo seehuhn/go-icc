@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.7.5] (2026-10-10)
+
+### Added
+- Support for the ICC-absolute colorimetric rendering intent: under
+  `AbsoluteColorimetric`, PCS values are scaled by the profile's media
+  white point.  A missing or invalid media white point tag falls back
+  to the PCS white point.
+- `Transform.Profile` and `Transform.Intent` fields.
+- `Profile.ProfileType`, with the `ProfileType` type and its constants.
+- `PCSWhitePoint`, the white point of the profile connection space.
+
+### Changed
+- `Curve.Encode` returns an error for tables with fewer than two
+  entries, invalid parameter counts and values outside the range of the
+  ICC encoding.
+- `Curve` no longer caches an inverse table and is safe for concurrent
+  use.  `Evaluate`, `Invert`, `IsIdentity` and `Encode` follow one
+  precedence rule (`Table`, then `Params`, then `Gamma`) when several
+  fields are set.  `Invert` returns the smallest input reaching the
+  given output, or 1 if there is none.
+- CLUTs are stored as `float32`, halving their memory use.
+
+### Fixed
+- PCS Lab values are decoded against the PCS white point instead of the
+  media white point.
+- PCS values in `lut16Type` and `lut8Type` tags are read and written in
+  the encodings these tag types define: the legacy 16-bit Lab encoding
+  shrank Lab values by 0.39%, and the PCSXYZ encoding halved XYZ values
+  on read and doubled them on write.
+- Encoding rounds to nearest instead of truncating, so that 8-bit and
+  16-bit samples and s15Fixed16 values survive a read-write cycle.
+
 ## [v0.7.4] (2026-06-25)
 
 ### Added
