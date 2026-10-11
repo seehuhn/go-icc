@@ -125,7 +125,7 @@ func decodeCurveType(b *membudget.Budget, data []byte) (*Curve, error) {
 	if uint64(len(data)) < 12+2*uint64(n) {
 		return nil, errInvalidTagData
 	}
-	table, err := membudget.AllocSlice[uint16](b, int(n))
+	table, err := b.AllocSlice[uint16](int(n))
 	if err != nil {
 		return nil, err
 	}
@@ -163,7 +163,7 @@ func decodeParametricCurve(b *membudget.Budget, data []byte) (*Curve, error) {
 		return nil, errInvalidTagData
 	}
 
-	params, err := membudget.AllocSlice[float64](b, numParams)
+	params, err := b.AllocSlice[float64](numParams)
 	if err != nil {
 		return nil, err
 	}

@@ -64,7 +64,7 @@ func decodeMLUC(b *membudget.Budget, data []byte) (MultiLocalizedUnicode, error)
 	if n == 0 || uint64(len(data)) < 16+12*uint64(n) {
 		return nil, errInvalidTagData
 	}
-	res, err := membudget.AllocSlice[LocalizedUnicode](b, int(n))
+	res, err := b.AllocSlice[LocalizedUnicode](int(n))
 	if err != nil {
 		return nil, err
 	}
@@ -80,7 +80,7 @@ func decodeMLUC(b *membudget.Budget, data []byte) (MultiLocalizedUnicode, error)
 			return nil, errInvalidTagData
 		}
 
-		d16, err := membudget.AllocSlice[uint16](b, int(length/2))
+		d16, err := b.AllocSlice[uint16](int(length / 2))
 		if err != nil {
 			return nil, err
 		}
