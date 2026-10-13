@@ -92,6 +92,10 @@ type Transform struct {
 	// lazy per-direction construction keeps a shared Transform concurrency-safe
 	fwdOnce sync.Once
 	revOnce sync.Once
+
+	// source and destination black points, computed lazily
+	bpOnce, dbpOnce sync.Once
+	bp, dbp         [3]float64
 }
 
 // ProfileType describes the machinery a profile uses to convert colours.
@@ -375,7 +379,16 @@ func lutFallbackChain(dir direction, intent RenderingIntent) []TagType {
 // tristimulus white point can take.  The encoded values are signed and reach
 // ±32768, so an unchecked tag could flip the sign of the ICC-absolute scaling,
 // divide by zero in it, or inflate it without bound.
+//
+// Version 2 display profiles commonly record the unadapted display white
+// (e.g. D65) in the tag, while the colorimetry of a display is defined
+// relative to the PCS white.  mediaWhitePoint ignores the tag for these
+// profiles, so that ICC-absolute values of display colours are not tinted by
+// the display's illuminant.
 func mediaWhitePoint(p *Profile) [3]float64 {
+	if p.Version < Version4_0_0 && p.Class == DisplayDeviceProfile {
+		return PCSWhitePoint
+	}
 	data, ok := p.TagData[MediaWhitePoint]
 	if !ok {
 		return PCSWhitePoint
@@ -451,11 +464,10 @@ func (t *Transform) grayTRCFromPCS(Y float64) float64 {
 //
 // For every intent but [AbsoluteColorimetric] the result is media-relative and
 // referenced to [PCSWhitePoint].  Under [AbsoluteColorimetric] it is scaled by
-// the media white point stored in the profile, and so is referenced to the
-// illuminant that tag was measured against.  ICC version 4 requires the tag to
-// be adapted to the PCS white point, while version 2 profiles commonly store
-// the unadapted measurement; the two built-in sRGB profiles differ in exactly
-// this way.
+// the media white point stored in the profile.  Version 2 display profiles
+// are the exception: they commonly store the unadapted display white, so
+// their media white point is taken to be [PCSWhitePoint], and absolute and
+// relative values coincide.
 //
 // The Workspace argument is used as scratch space.
 //

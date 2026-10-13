@@ -389,9 +389,10 @@ func TestCMYKProfileAbsoluteIntent(t *testing.T) {
 }
 
 // TestSRGBAbsoluteIntent checks the ICC-absolute scaling on the built-in
-// matrix/TRC profiles.  White reports the media white point recorded in the
-// profile: D50 for the version 4 profile, which adapts the tag as ICC v4
-// requires, and the unadapted D65 measurement for the version 2 one.
+// matrix/TRC profiles.  White reports the media white point: the tag value
+// for the version 4 profile, which adapts the tag to D50 as ICC v4 requires,
+// and the PCS white for the version 2 display profile, whose tag records the
+// unadapted D65 measurement.
 func TestSRGBAbsoluteIntent(t *testing.T) {
 	for _, tt := range []struct {
 		name string
@@ -405,9 +406,12 @@ func TestSRGBAbsoluteIntent(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			white, err := parseXYZ(p.TagData[MediaWhitePoint])
-			if err != nil {
-				t.Fatal(err)
+			white := PCSWhitePoint
+			if p.Version >= Version4_0_0 {
+				white, err = parseXYZ(p.TagData[MediaWhitePoint])
+				if err != nil {
+					t.Fatal(err)
+				}
 			}
 			tr, err := NewTransform(p, AbsoluteColorimetric)
 			if err != nil {

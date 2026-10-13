@@ -723,6 +723,43 @@ func TestAbsoluteIntentGrayTRC(t *testing.T) {
 	}
 }
 
+// TestMediaWhitePointV2Display checks that version 2 display profiles ignore
+// the media white point tag, which often holds the unadapted display white.
+func TestMediaWhitePointV2Display(t *testing.T) {
+	for _, tc := range []struct {
+		version Version
+		class   ProfileClass
+		ignored bool
+	}{
+		{Version2_1_0, DisplayDeviceProfile, true},
+		{Version2_1_0, OutputDeviceProfile, false},
+		{Version4_0_0, DisplayDeviceProfile, false},
+	} {
+		p := makeGrayProfile(1.0, d65WhitePoint)
+		p.Version = tc.version
+		p.Class = tc.class
+		tr, err := NewTransform(p, AbsoluteColorimetric)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		want := PCSWhitePoint
+		if !tc.ignored {
+			want, err = parseXYZ(p.TagData[MediaWhitePoint])
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		X, Y, Z := tr.ToXYZ([]float64{1}, &Workspace{})
+		if math.Abs(X-want[0]) > 1e-9 ||
+			math.Abs(Y-want[1]) > 1e-9 ||
+			math.Abs(Z-want[2]) > 1e-9 {
+			t.Errorf("%v %v: white -> XYZ (%g, %g, %g), want %v",
+				tc.version, tc.class, X, Y, Z, want)
+		}
+	}
+}
+
 // TestMediaWhitePointFallback checks that an unusable media white point tag
 // falls back to the PCS white.  Without this, the ICC-absolute scaling would
 // zero or invert every output value.
