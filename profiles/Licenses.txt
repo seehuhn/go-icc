@@ -1,5 +1,5 @@
-sRGB-v2-micro.icc and sRGB-v4.icc
------------------------------------
+sRGB-v2-micro.icc, sRGB-v4.icc, ProPhoto-v2-micro.icc and ProPhoto-v4.icc
+--------------------------------------------------------------------------
 
 Downloaded from https://github.com/saucecontrol/Compact-ICC-Profiles .
 

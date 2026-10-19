@@ -23,14 +23,16 @@ import (
 	"github.com/google/go-cmp/cmp"
 )
 
-func TestSRGBProfilesDecode(t *testing.T) {
+func TestRGBProfilesDecode(t *testing.T) {
 	tests := []struct {
 		name    string
 		data    []byte
 		version Version
 	}{
-		{"v2", SRGBv2Profile, Version2_1_0},
-		{"v4", SRGBv4Profile, Version4_2_0},
+		{"sRGB v2", SRGBv2Profile, Version2_1_0},
+		{"sRGB v4", SRGBv4Profile, Version4_2_0},
+		{"ROMM v2", ROMMv2Profile, Version2_1_0},
+		{"ROMM v4", ROMMv4Profile, Version4_2_0},
 	}
 
 	for _, tt := range tests {
@@ -56,13 +58,15 @@ func TestSRGBProfilesDecode(t *testing.T) {
 	}
 }
 
-func TestSRGBProfilesRoundTrip(t *testing.T) {
+func TestRGBProfilesRoundTrip(t *testing.T) {
 	for _, tt := range []struct {
 		name string
 		data []byte
 	}{
-		{"v2", SRGBv2Profile},
-		{"v4", SRGBv4Profile},
+		{"sRGB v2", SRGBv2Profile},
+		{"sRGB v4", SRGBv4Profile},
+		{"ROMM v2", ROMMv2Profile},
+		{"ROMM v4", ROMMv4Profile},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			p, err := Decode(tt.data)
@@ -178,6 +182,66 @@ func TestSRGBProfilesPrimaries(t *testing.T) {
 							X, Y, Z, pp.want.X, pp.want.Y, pp.want.Z)
 					}
 				})
+			}
+		})
+	}
+}
+
+// TestROMMProfilesTransform checks the ROMM RGB profiles against the
+// encoding: the D50 primaries from ISO 22028-2, and the tone curve with
+// its linear segment below 1/32.
+func TestROMMProfilesTransform(t *testing.T) {
+	type xyz struct{ X, Y, Z float64 }
+	type testCase struct {
+		name  string
+		input []float64
+		want  xyz
+	}
+	// grey values: Y = x/16 below 1/32, Y = x^1.8 above
+	grey := func(x float64) xyz {
+		y := math.Pow(x, 1.8)
+		if x < 1.0/32 {
+			y = x / 16
+		}
+		return xyz{0.9642 * y, y, 0.8249 * y}
+	}
+	cases := []testCase{
+		{"red", []float64{1, 0, 0}, xyz{0.7977, 0.2880, 0.0000}},
+		{"green", []float64{0, 1, 0}, xyz{0.1352, 0.7119, 0.0000}},
+		{"blue", []float64{0, 0, 1}, xyz{0.0313, 0.0001, 0.8249}},
+		{"white", []float64{1, 1, 1}, grey(1)},
+		{"black", []float64{0, 0, 0}, grey(0)},
+		{"mid grey", []float64{0.5, 0.5, 0.5}, grey(0.5)},
+		{"toe", []float64{0.02, 0.02, 0.02}, grey(0.02)},
+	}
+
+	// small enough to tell the linear segment from a pure power law,
+	// which gives Y = 0.00087 instead of 0.00125 at x = 0.02
+	const eps = 1e-4
+	for _, tt := range []struct {
+		name string
+		data []byte
+	}{
+		{"v2", ROMMv2Profile},
+		{"v4", ROMMv4Profile},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			p, err := Decode(tt.data)
+			if err != nil {
+				t.Fatalf("decode failed: %v", err)
+			}
+			tr, err := NewTransform(p, Perceptual)
+			if err != nil {
+				t.Fatalf("NewTransform failed: %v", err)
+			}
+			for _, c := range cases {
+				X, Y, Z := tr.ToXYZ(c.input, &Workspace{})
+				if math.Abs(X-c.want.X) > eps ||
+					math.Abs(Y-c.want.Y) > eps ||
+					math.Abs(Z-c.want.Z) > eps {
+					t.Errorf("%s: XYZ = (%.5f, %.5f, %.5f), want (%.5f, %.5f, %.5f)",
+						c.name, X, Y, Z, c.want.X, c.want.Y, c.want.Z)
+				}
 			}
 		})
 	}

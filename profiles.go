@@ -32,6 +32,21 @@ var (
 	//go:embed profiles/sRGB-v4.icc
 	SRGBv4Profile []byte
 
+	// ROMMv2Profile contains a compact ROMM RGB (ProPhoto RGB) ICC profile
+	// using ICC version 2.  The tone curve is sampled at 62 points.
+	// From https://github.com/saucecontrol/Compact-ICC-Profiles (CC0 1.0).
+	//
+	//go:embed profiles/ProPhoto-v2-micro.icc
+	ROMMv2Profile []byte
+
+	// ROMMv4Profile contains a compact ROMM RGB (ProPhoto RGB) ICC profile
+	// using ICC version 4.  The tone curve is exact, including the linear
+	// segment near black.
+	// From https://github.com/saucecontrol/Compact-ICC-Profiles (CC0 1.0).
+	//
+	//go:embed profiles/ProPhoto-v4.icc
+	ROMMv4Profile []byte
+
 	// CMYKProfile contains a CMYK ICC profile for US web-offset printing
 	// on coated paper (CGATS TR 005 / SWOP). The profile supports both
 	// device-to-PCS and PCS-to-device transforms.
