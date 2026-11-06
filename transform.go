@@ -653,17 +653,17 @@ func xyzToLab(X, Y, Z float64) (L, a, b float64) {
 	offset := 16.0 / 116.0
 
 	if xr > threshold {
-		fx = math.Pow(xr, 1.0/3.0)
+		fx = math.Cbrt(xr)
 	} else {
 		fx = xr*scale + offset
 	}
 	if yr > threshold {
-		fy = math.Pow(yr, 1.0/3.0)
+		fy = math.Cbrt(yr)
 	} else {
 		fy = yr*scale + offset
 	}
 	if zr > threshold {
-		fz = math.Pow(zr, 1.0/3.0)
+		fz = math.Cbrt(zr)
 	} else {
 		fz = zr*scale + offset
 	}
