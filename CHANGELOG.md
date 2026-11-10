@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.7.6] (2026-11-10)
+
+### Added
+- `Transform.SourceBlackPoint` and `Transform.DestinationBlackPoint`
+  find the black point of a profile under the transform's rendering
+  intent, as media-relative PCS XYZ following ISO 18619.  For
+  LUT-based output profiles the destination black point is found by a
+  round trip from the PCS to the device and back, which discounts ink
+  limits.
+- `PerceptualBlackPoint`, the black point of the ICC perceptual
+  reference medium, which applies to version 4 profiles under the
+  perceptual and saturation intents.
+- `BlackPointScaling`, `NewBlackPointScaling` and
+  `BlackPointScaling.Apply` implement the PCS mapping of black point
+  compensation.  The mapping takes a source black point to a
+  destination black point and leaves the PCS white point fixed.
+- `ROMMv2Profile` and `ROMMv4Profile`, embedded ROMM RGB (ProPhoto RGB)
+  profiles.
+- The `icctest` package provides `IntentProfile`, a gray LUT profile
+  whose tables differ per rendering intent, for testing intent
+  selection.
+
+### Changed
+- The media white point tag is ignored for version 2 display profiles.
+  These profiles commonly record the unadapted display white, which
+  tinted ICC-absolute colorimetric results.
+- The module requires Go 1.27.
+
 ## [v0.7.5] (2026-10-10)
 
 ### Added
