@@ -11,14 +11,31 @@ http://creativecommons.org/publicdomain/zero/1.0/
 TR005.icc
 ---------
 
-Generated from characterization data (.ti3 files) in the Debian
-"icc-profiles-free" source package, version 2.0.1+dfsg, using
-ArgyllCMS colprof.
+Generated with ArgyllCMS colprof from the file TR005.ti3 in the Debian
+"icc-profiles-free" source package, version 2.0.1+dfsg.
 
 Source: http://archive.ubuntu.com/ubuntu/pool/main/i/icc-profiles-free/icc-profiles-free_2.0.1+dfsg.orig.tar.bz2
 
-The characterization data is copyright Kai-Uwe Behrmann <www.behrmann.name>
-and distributed under the zlib/libpng license:
+The source of the characterization data is the technical report
+ANSI CGATS/SWOP TR 005-2007, "Color Characterization Data for SWOP
+proofing on Grade 5 coated paper" (ANSI CGATS and SWOP Committee).
+The data file carries the notice
+
+  Copyright 2007 by NPES The Association for Suppliers of Printing,
+  Publishing and Converting Technologies.
+
+and the following permission, which colprof did not copy into the
+profile:
+
+  "Profiles, or other derivative work, based on these data may be
+  distributed with no further permissions from CGATS.  However, this
+  Technical Report must be identified as the source of the
+  characterization data."
+
+TR005.ti3 is a version of this data adapted for ArgyllCMS by
+Kai-Uwe Behrmann <www.behrmann.name> for the OpenICC project.  The
+adaptation is copyright Kai-Uwe Behrmann and distributed under the
+zlib/libpng license:
 
   This software is provided 'as-is', without any express or implied
   warranty. In no event will the authors be held liable for any damages
