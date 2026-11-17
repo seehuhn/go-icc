@@ -380,8 +380,7 @@ func BenchmarkSimplexInterp4D(b *testing.B) {
 	fracs := make([]float64, n)
 	out := make([]float64, outChannels)
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := 0; b.Loop(); i++ {
 		in := inputs[i%len(inputs)]
 		simplexInterpInto(clut, gridPoints, strides, outChannels, in, out, indices, order, fracs)
 	}
@@ -401,8 +400,7 @@ func BenchmarkMultilinearInterp4D(b *testing.B) {
 	fracs := make([]float64, n)
 	out := make([]float64, outChannels)
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := 0; b.Loop(); i++ {
 		in := inputs[i%len(inputs)]
 		multilinearInterpReferenceInto(clut, gridPoints, strides, outChannels, in, out, indices, fracs)
 	}
