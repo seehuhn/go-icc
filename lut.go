@@ -178,7 +178,7 @@ func decodeLUT8(b *membudget.Budget, data []byte) (*LUT8, error) {
 	// input tables: 256 entries per channel
 	inputTableStart := 48
 	inputTableSize := 256 * inputChannels
-	if len(data) < inputTableStart+inputTableSize {
+	if !fits(data, uint64(inputTableStart), uint64(inputTableSize)) {
 		return nil, errInvalidTagData
 	}
 
@@ -206,7 +206,7 @@ func decodeLUT8(b *membudget.Budget, data []byte) (*LUT8, error) {
 	}
 
 	clutStart := inputTableStart + inputTableSize
-	if len(data) < clutStart+clutSize {
+	if !fits(data, uint64(clutStart), uint64(clutSize)) {
 		return nil, errInvalidTagData
 	}
 
@@ -221,7 +221,7 @@ func decodeLUT8(b *membudget.Budget, data []byte) (*LUT8, error) {
 	// output tables: 256 entries per channel
 	outputTableStart := clutStart + clutSize
 	outputTableSize := 256 * outputChannels
-	if len(data) < outputTableStart+outputTableSize {
+	if !fits(data, uint64(outputTableStart), uint64(outputTableSize)) {
 		return nil, errInvalidTagData
 	}
 
@@ -403,7 +403,7 @@ func decodeLUT16(b *membudget.Budget, data []byte) (*LUT16, error) {
 	// input tables
 	inputTableStart := 52
 	inputTableSize := inputTableEntries * inputChannels * 2
-	if len(data) < inputTableStart+inputTableSize {
+	if !fits(data, uint64(inputTableStart), uint64(inputTableSize)) {
 		return nil, errInvalidTagData
 	}
 
@@ -429,7 +429,7 @@ func decodeLUT16(b *membudget.Budget, data []byte) (*LUT16, error) {
 	}
 
 	clutStart := inputTableStart + inputTableSize
-	if len(data) < clutStart+clutSize*2 {
+	if !fits(data, uint64(clutStart), 2*uint64(clutSize)) {
 		return nil, errInvalidTagData
 	}
 
@@ -444,7 +444,7 @@ func decodeLUT16(b *membudget.Budget, data []byte) (*LUT16, error) {
 	// output tables
 	outputTableStart := clutStart + clutSize*2
 	outputTableBytes := outputTableEntries * outputChannels * 2
-	if len(data) < outputTableStart+outputTableBytes {
+	if !fits(data, uint64(outputTableStart), uint64(outputTableBytes)) {
 		return nil, errInvalidTagData
 	}
 
@@ -544,7 +544,7 @@ func decodeLUTAToB(b *membudget.Budget, data []byte) (*LUTAToB, error) {
 
 	// decode B curves (output curves for mAB)
 	if bCurveOffset != 0 {
-		curves, err := decodeCurvesAtOffset(b, data, int(bCurveOffset), outputChannels)
+		curves, err := decodeCurvesAtOffset(b, data, bCurveOffset, outputChannels)
 		if err != nil {
 			return nil, err
 		}
@@ -553,7 +553,7 @@ func decodeLUTAToB(b *membudget.Budget, data []byte) (*LUTAToB, error) {
 
 	// decode A curves (input curves for mAB)
 	if aCurveOffset != 0 {
-		curves, err := decodeCurvesAtOffset(b, data, int(aCurveOffset), inputChannels)
+		curves, err := decodeCurvesAtOffset(b, data, aCurveOffset, inputChannels)
 		if err != nil {
 			return nil, err
 		}
@@ -562,7 +562,7 @@ func decodeLUTAToB(b *membudget.Budget, data []byte) (*LUTAToB, error) {
 
 	// decode matrix (3x4) - must decode before M curves to know if matrix is present
 	if matrixOffset != 0 {
-		matrix, err := decodeMatrix3x4(b, data, int(matrixOffset))
+		matrix, err := decodeMatrix3x4(b, data, matrixOffset)
 		if err != nil {
 			return nil, err
 		}
@@ -573,7 +573,7 @@ func decodeLUTAToB(b *membudget.Budget, data []byte) (*LUTAToB, error) {
 	// on 3 channels between CLUT and matrix)
 	if mCurveOffset != 0 {
 		mCurveCount := 3 // M curves always operate on 3 channels (matrix input)
-		curves, err := decodeCurvesAtOffset(b, data, int(mCurveOffset), mCurveCount)
+		curves, err := decodeCurvesAtOffset(b, data, mCurveOffset, mCurveCount)
 		if err != nil {
 			return nil, err
 		}
@@ -582,7 +582,7 @@ func decodeLUTAToB(b *membudget.Budget, data []byte) (*LUTAToB, error) {
 
 	// decode CLUT
 	if clutOffset != 0 {
-		gridPoints, clut, precision, err := decodeCLUT(b, data, int(clutOffset), inputChannels, outputChannels)
+		gridPoints, clut, precision, err := decodeCLUT(b, data, clutOffset, inputChannels, outputChannels)
 		if err != nil {
 			return nil, err
 		}
@@ -662,7 +662,7 @@ func decodeLUTBToA(b *membudget.Budget, data []byte) (*LUTBToA, error) {
 
 	// decode B curves (input curves for mBA)
 	if bCurveOffset != 0 {
-		curves, err := decodeCurvesAtOffset(b, data, int(bCurveOffset), inputChannels)
+		curves, err := decodeCurvesAtOffset(b, data, bCurveOffset, inputChannels)
 		if err != nil {
 			return nil, err
 		}
@@ -671,7 +671,7 @@ func decodeLUTBToA(b *membudget.Budget, data []byte) (*LUTBToA, error) {
 
 	// decode A curves (output curves for mBA)
 	if aCurveOffset != 0 {
-		curves, err := decodeCurvesAtOffset(b, data, int(aCurveOffset), outputChannels)
+		curves, err := decodeCurvesAtOffset(b, data, aCurveOffset, outputChannels)
 		if err != nil {
 			return nil, err
 		}
@@ -680,7 +680,7 @@ func decodeLUTBToA(b *membudget.Budget, data []byte) (*LUTBToA, error) {
 
 	// decode matrix (3x4) - must decode before M curves to know if matrix is present
 	if matrixOffset != 0 {
-		matrix, err := decodeMatrix3x4(b, data, int(matrixOffset))
+		matrix, err := decodeMatrix3x4(b, data, matrixOffset)
 		if err != nil {
 			return nil, err
 		}
@@ -691,7 +691,7 @@ func decodeLUTBToA(b *membudget.Budget, data []byte) (*LUTBToA, error) {
 	// between matrix output and CLUT input)
 	if mCurveOffset != 0 {
 		mCurveCount := 3 // M curves always operate on 3 channels (matrix output)
-		curves, err := decodeCurvesAtOffset(b, data, int(mCurveOffset), mCurveCount)
+		curves, err := decodeCurvesAtOffset(b, data, mCurveOffset, mCurveCount)
 		if err != nil {
 			return nil, err
 		}
@@ -700,7 +700,7 @@ func decodeLUTBToA(b *membudget.Budget, data []byte) (*LUTBToA, error) {
 
 	// decode CLUT
 	if clutOffset != 0 {
-		gridPoints, clut, precision, err := decodeCLUT(b, data, int(clutOffset), inputChannels, outputChannels)
+		gridPoints, clut, precision, err := decodeCLUT(b, data, clutOffset, inputChannels, outputChannels)
 		if err != nil {
 			return nil, err
 		}
@@ -868,55 +868,62 @@ func clampInto(v []float64) {
 	}
 }
 
-func decodeCurvesAtOffset(b *membudget.Budget, data []byte, offset int, numCurves int) ([]*Curve, error) {
+// fits reports whether the n bytes starting at off lie inside data.
+func fits(data []byte, off, n uint64) bool {
+	l := uint64(len(data))
+	return off <= l && n <= l-off
+}
+
+func decodeCurvesAtOffset(b *membudget.Budget, data []byte, offset uint32, numCurves int) ([]*Curve, error) {
 	curves, err := b.AllocSlice[*Curve](numCurves)
 	if err != nil {
 		return nil, err
 	}
-	pos := offset
+	pos := uint64(offset)
 	for i := range numCurves {
-		if pos+8 > len(data) {
+		if !fits(data, pos, 8) {
 			return nil, errInvalidTagData
 		}
+		p := int(pos)
 
-		typeID := string(data[pos : pos+4])
-		var size int
+		typeID := string(data[p : p+4])
+		var size uint64
 		switch typeID {
 		case "curv":
-			if pos+12 > len(data) {
+			if !fits(data, pos, 12) {
 				return nil, errInvalidTagData
 			}
-			n := getUint32(data, pos+8)
-			size = 12 + int(n)*2
+			n := getUint32(data, p+8)
+			size = 12 + 2*uint64(n)
 		case "para":
-			if pos+12 > len(data) {
+			if !fits(data, pos, 12) {
 				return nil, errInvalidTagData
 			}
-			funcType := int(getUint16(data, pos+8))
+			funcType := int(getUint16(data, p+8))
 			numParams := []int{1, 3, 4, 5, 7}[min(funcType, 4)]
-			size = 12 + numParams*4
+			size = 12 + uint64(numParams)*4
 		default:
 			return nil, errUnexpectedType
 		}
 
-		size = (size + 3) &^ 3
-
-		if pos+size > len(data) {
+		// the tag size excludes the padding after the final curve
+		if !fits(data, pos, size) {
 			return nil, errInvalidTagData
 		}
 
-		curve, err := decodeCurve(b, data[pos:pos+size])
+		curve, err := decodeCurve(b, data[p:p+int(size)])
 		if err != nil {
 			return nil, err
 		}
 		curves[i] = curve
-		pos += size
+
+		pos += (size + 3) &^ 3
 	}
 	return curves, nil
 }
 
-func decodeMatrix3x4(b *membudget.Budget, data []byte, offset int) ([]float64, error) {
-	if offset+48 > len(data) {
+func decodeMatrix3x4(b *membudget.Budget, data []byte, offset uint32) ([]float64, error) {
+	if !fits(data, uint64(offset), 48) {
 		return nil, errInvalidTagData
 	}
 	matrix, err := b.AllocSlice[float64](12)
@@ -924,7 +931,7 @@ func decodeMatrix3x4(b *membudget.Budget, data []byte, offset int) ([]float64, e
 		return nil, err
 	}
 	for i := range 12 {
-		matrix[i] = getS15Fixed16(data, offset+i*4)
+		matrix[i] = getS15Fixed16(data, int(offset)+i*4)
 	}
 	if isIdentityMatrix3x4(matrix) {
 		return nil, nil
@@ -932,10 +939,11 @@ func decodeMatrix3x4(b *membudget.Budget, data []byte, offset int) ([]float64, e
 	return matrix, nil
 }
 
-func decodeCLUT(b *membudget.Budget, data []byte, offset int, inputChannels, outputChannels int) ([]int, []float32, int, error) {
-	if offset+20 > len(data) {
+func decodeCLUT(b *membudget.Budget, data []byte, clutOffset uint32, inputChannels, outputChannels int) ([]int, []float32, int, error) {
+	if !fits(data, uint64(clutOffset), 20) {
 		return nil, nil, 0, errInvalidTagData
 	}
+	offset := int(clutOffset)
 
 	gridPoints, err := b.AllocSlice[int](inputChannels)
 	if err != nil {
@@ -959,7 +967,7 @@ func decodeCLUT(b *membudget.Budget, data []byte, offset int, inputChannels, out
 	var clut []float32
 	switch precision {
 	case 1:
-		if len(data) < clutDataStart+size {
+		if !fits(data, uint64(clutDataStart), uint64(size)) {
 			return nil, nil, 0, errInvalidTagData
 		}
 		clut, err = b.AllocSlice[float32](size)
@@ -970,7 +978,7 @@ func decodeCLUT(b *membudget.Budget, data []byte, offset int, inputChannels, out
 			clut[i] = float32(data[clutDataStart+i]) / 255
 		}
 	case 2:
-		if len(data) < clutDataStart+size*2 {
+		if !fits(data, uint64(clutDataStart), 2*uint64(size)) {
 			return nil, nil, 0, errInvalidTagData
 		}
 		clut, err = b.AllocSlice[float32](size)
@@ -1061,7 +1069,8 @@ func encodeLUTAB(inputChannels, outputChannels int, aCurves []*Curve, gridPoints
 		offset += uint32(len(aCurveData))
 	}
 
-	buf := make([]byte, align4(offset))
+	// the tag size excludes trailing padding
+	buf := make([]byte, offset)
 
 	if isBToA {
 		copy(buf[0:4], "mBA ")
@@ -1150,8 +1159,8 @@ func encodeCurves(curves []*Curve, count int) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		for len(curveData)%4 != 0 {
-			curveData = append(curveData, 0)
+		for len(buf)%4 != 0 {
+			buf = append(buf, 0)
 		}
 		buf = append(buf, curveData...)
 	}

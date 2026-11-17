@@ -889,3 +889,106 @@ func TestLUTTagByteRoundTrip(t *testing.T) {
 		wantSameBytes(t, got, data)
 	})
 }
+
+func TestDecodeLUTHugeOffsets(t *testing.T) {
+	huge := []uint32{0x7FFFFFFF, 0x80000000, 0xFFFFFFF0, 0xFFFFFFFF}
+	for _, sig := range []string{"mAB ", "mBA "} {
+		for field := 12; field <= 28; field += 4 {
+			for _, v := range huge {
+				data := make([]byte, 64)
+				copy(data, sig)
+				data[8], data[9] = 3, 3
+				putUint32(data, field, v)
+				if _, err := DecodeLUT(data); err == nil {
+					t.Errorf("%s field %d value %#x: expected error", sig, field, v)
+				}
+			}
+		}
+	}
+}
+
+func TestDecodeLUTHugeCurveCount(t *testing.T) {
+	for _, sig := range []string{"mAB ", "mBA "} {
+		for _, n := range []uint32{0x7FFFFFFF, 0x80000000, 0xFFFFFFFE, 0xFFFFFFFF} {
+			data := make([]byte, 64)
+			copy(data, sig)
+			data[8], data[9] = 3, 3
+			putUint32(data, 12, 32)
+			copy(data[32:], "curv")
+			putUint32(data, 40, n)
+			if _, err := DecodeLUT(data); err == nil {
+				t.Errorf("%s curve count %#x: expected error", sig, n)
+			}
+		}
+	}
+}
+
+func TestDecodeLUTHugeCLUT(t *testing.T) {
+	data := make([]byte, 64)
+	copy(data, "mAB ")
+	data[8], data[9] = 4, 4
+	putUint32(data, 24, 32)
+	for i := range 4 {
+		data[32+i] = 100
+	}
+	data[48] = 2
+	if _, err := DecodeLUT(data); err == nil {
+		t.Error("expected error")
+	}
+
+	// mft2 with a large CLUT and no data
+	data = make([]byte, 52+64)
+	copy(data, "mft2")
+	data[8], data[9], data[10] = 3, 15, 255
+	if _, err := DecodeLUT(data); err == nil {
+		t.Error("expected error for mft2")
+	}
+}
+
+// TestDecodeLUTUnpaddedFinalCurve checks that a curve set ending the tag
+// decodes without the pad bytes after its final curve, which the tag size
+// excludes.
+func TestDecodeLUTUnpaddedFinalCurve(t *testing.T) {
+	for _, sig := range []string{"mAB ", "mBA "} {
+		// B curves: two identity curves, then a gamma curve of 14 bytes
+		data := make([]byte, 32+12+12+14)
+		copy(data, sig)
+		data[8], data[9] = 3, 3
+		putUint32(data, 12, 32)
+		copy(data[32:], "curv")
+		copy(data[44:], "curv")
+		copy(data[56:], "curv")
+		putUint32(data, 64, 1)
+		putUint16(data, 68, 0x0200)
+
+		lut, err := DecodeLUT(data)
+		if err != nil {
+			t.Fatalf("%s: %v", sig, err)
+		}
+		dst := make([]float64, 3)
+		lut.Apply([]float64{0.5, 0.5, 0.5}, dst, &Workspace{})
+		want := []float64{0.5, 0.5, 0.25}
+		for i := range dst {
+			if math.Abs(dst[i]-want[i]) > 1e-6 {
+				t.Errorf("%s: got %v, want %v", sig, dst, want)
+				break
+			}
+		}
+	}
+}
+
+// TestLUTEncodeNoTrailingPadding checks that encoded LUTs end with their last
+// data byte, so that the tag size does not include padding.
+func TestLUTEncodeNoTrailingPadding(t *testing.T) {
+	for _, tc := range lutTestCases {
+		t.Run(tc.Name, func(t *testing.T) {
+			data, err := tc.LUT.Encode()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := DecodeLUT(data[:len(data)-1]); err == nil {
+				t.Error("decode of truncated data succeeded")
+			}
+		})
+	}
+}
