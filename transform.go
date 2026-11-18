@@ -38,8 +38,7 @@ const (
 //
 // Not every profile supports both directions (e.g. a singular colour matrix, or
 // a LUT profile carrying only AToB or only BToA tags). Query
-// [Transform.CanToXYZ] and [Transform.CanFromXYZ] before relying on a direction;
-// an unsupported direction yields zero output.
+// [Transform.CanToXYZ] and [Transform.CanFromXYZ] before relying on a direction.
 //
 // A Transform is safe for concurrent use: [Transform.ToXYZ] and
 // [Transform.FromXYZ] may be called from multiple goroutines, provided each
